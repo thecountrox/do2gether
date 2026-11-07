@@ -27,6 +27,7 @@ PORT=9000 WT_SECRET=change-me cargo run -p wt-server
 | Variable    | Default      | Meaning                                                   |
 |-------------|--------------|-----------------------------------------------------------|
 | `PORT`      | `8787`       | TCP port (`0` picks a free one; the bound port is printed) |
+| `BIND`      | `0.0.0.0`    | Interface to bind; production uses `127.0.0.1` behind Caddy |
 | `WT_SECRET` | `dev-secret` | HMAC key for join tokens (empty counts as unset)          |
 
 Rooms live in memory only and disappear when the process exits.
@@ -37,6 +38,23 @@ curl localhost:8787/health            # {"ok":true}
 # WebSocket: ws://localhost:8787/ws?room=<room_id>&token=<join_token>
 #   close 4001 = invalid/expired token, 4004 = unknown room
 ```
+
+## wt-play (mpv client)
+
+```sh
+cargo run -p wt-cli -- --server http://127.0.0.1:8787 --create --file /tmp/movie.mp4
+cargo run -p wt-cli -- --server https://watch.141.253.97.15.sslip.io \
+  --room <id> --token <token> --file /tmp/movie.mp4
+```
+
+Flags: `--create`, `--room/--token`, `--file`, `--name`, `--mpv`, `--headless` (`--vo=null --ao=null`), `--simulate`
+(wall-clock virtual player for tests). stdin: `play`, `pause`, `seek <ms>`, `q`.
+
+- TLS (rustls, native roots) is supported for both `https://` create and `wss://` join.
+- mpv runs with `--hr-seek=yes`; without it a seek lands on a keyframe and parks the drift at
+  175–215 ms, just under the 250 ms ignore threshold, so it is never corrected.
+- Drift policy: ignore < 250 ms, rate ±3 % between 250 ms and 2 s, seek beyond 2 s.
+
 
 ## Test and lint
 

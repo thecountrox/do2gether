@@ -2,51 +2,69 @@
 
 Watch, listen and play together. One room, two modes, Discord as the lobby.
 
-Status: **M1 server slice complete** — room server, protocol v1, clock exchange, playback anchors, queue, presence, telemetry. 15 tests green.
+**v0 is live:** Rust room server deployed at `https://watch.141.253.97.15.sslip.io`, and `wt-play` — a real mpv client that joins a room, syncs to the room anchor, and reports drift. Measured over the public wss endpoint on one machine: **max 120 ms, p95 119 ms** after play, seek and pause.
 
 ## Layout
 
 ```
-docs/        decisions and spec
+docs/        spec, protocol notes, decisions, stack
 protocol/    room.schema.json — canonical wire format
-server/      TypeScript room server (Node 24, ws)
-app/         Flutter client (not started)
-ext/         browser extension for YouTube / YTM (not started)
+rust/        wt-protocol, wt-server, wt-cli (wt-play)   <- production code
+server/      TypeScript reference implementation (kept until parity is signed off)
+app/         Flutter client (v1, not started)
+ext/         browser extension for YouTube / YTM (v1, not started)
+deploy/      systemd unit, Caddy block, ops notes
+scripts/     demo-local.sh — two mpv clients against a room
 ```
 
-## Run
+## Quick start
 
 ```bash
-cd server
-npm install
-npm test          # 15 tests, ~1.5 s
-npx tsc --noEmit
-npm run dev       # listens on :8787
+cd rust
+cargo build --release -p wt-server -p wt-cli
+cargo test                       # 44 tests
+
+# terminal 1
+WT_SECRET=dev ./target/release/wt-server
+
+# terminal 2 — create a room and play a file
+./target/release/wt-play --server http://127.0.0.1:8787 --create --file /tmp/movie.mp4
+
+# terminal 3 — join it (copy the share line from terminal 2)
+./target/release/wt-play --server http://127.0.0.1:8787 --room <id> --token <token> --file /tmp/movie.mp4
 ```
 
+Against the deployed server:
+
+```bash
+./target/release/wt-play --server https://watch.141.253.97.15.sslip.io --create --file /tmp/movie.mp4
 ```
-POST /rooms          -> {"room_id":"…","join_token":"…"}
-GET  /health         -> {"ok":true}
-WS   /ws?room=…&token=…
-```
+
+stdin commands in `wt-play`: `play`, `pause`, `seek <ms>`, `q`.
 
 ## What works
 
-- Create room, mint a 10-minute HMAC join token, reject bad/expired tokens.
-- `hello` → `welcome` snapshot (rev, playback, queue, presence) + `server_now`.
-- Four-timestamp clock exchange, offset math tested to ±50 ms on one machine.
-- Playback as an anchor: play/pause/seek/queue/skip, monotonic `rev` and `seq`, state broadcast.
-- Reconnect receives the current anchor; reports are stored and never broadcast.
-- Malformed or unknown messages are ignored without dropping the connection.
+- Rooms, HMAC join tokens (10 min), `hello`/`welcome` snapshots, presence keyed by user.
+- Four-timestamp clock exchange; offset ±1 ms on loopback, ±50 ms tested.
+- Playback as an anchor: play/pause/seek/queue/skip with monotonic `rev`/`seq`, explicit `reject` for refused intents.
+- mpv client with drift policy (ignore < 250 ms, rate 250 ms–2 s, seek > 2 s), `--hr-seek=yes`, telemetry every 5 s.
+- TLS end to end (rustls, native roots), deployed behind Caddy with a real certificate.
+- Two headless mpv clients converge; `scripts/demo-local.sh` reproduces it.
+
+## Known gaps
+
+- Rooms are in memory: restarting the service drops them.
+- Drift after a seek settles around 100–180 ms, inside the 250 ms video tolerance but not tight enough for music (needs the host-stream model).
+- No Flutter UI yet; `app/` is empty. No Discord bot yet — needs a bot token from the owner.
+- TypeScript server remains as the reference; it will be deleted once the Rust one has run for a week.
 
 ## Next
 
-- Server v1.1: `reject` for refused intents, presence keyed by user (see `docs/02-decisions.md`).
-- Discord bot: OAuth, join tokens, voice-state gating, now-playing card.
-- mpv CLI client (desktop proof of sync before Flutter).
-- Navidrome adapter.
+- Flutter app: room list, media library, mpv texture, join from Discord.
+- Discord bot: OAuth, join tokens, voice-state gating, now-playing card, control buttons.
+- Navidrome adapter + host-stream mode (music done right).
 - Extension scaffold for YouTube, then the YTM spike.
 
 ## Design dialogue
 
-The architecture was stress-tested with Claude Opus 5.5; the transcript and decision table live in `~/hermes_message_home/watch-together-design/dialogue-2026-11-07.md`.
+Architecture was stress-tested with Claude Opus 5.5; transcript and decision table in `~/hermes_message_home/watch-together-design/dialogue-2026-11-07.md`.
