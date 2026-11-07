@@ -88,8 +88,8 @@ impl ServerUrl {
         Ok(ws)
     }
 
-    /// `POST /rooms` → `(room_id, join_token)`.
-    pub async fn create_room(&self) -> Result<(String, String), String> {
+    /// `POST /rooms` → `(room_id, join_token, host_id)`.
+    pub async fn create_room(&self) -> Result<(String, String, String), String> {
         let err = |e: io::Error| format!("POST {}{}/rooms: {e}", self.authority, self.base);
         // HTTP/1.0: the response is close-delimited, never chunked.
         let request = format!(
@@ -117,8 +117,14 @@ impl ServerUrl {
             return Err(format!("POST /rooms: HTTP {status}"));
         }
         let created: Value = serde_json::from_str(body).map_err(|e| format!("POST /rooms: {e}"))?;
-        match (created["room_id"].as_str(), created["join_token"].as_str()) {
-            (Some(room), Some(token)) => Ok((room.to_owned(), token.to_owned())),
+        match (
+            created["room_id"].as_str(),
+            created["join_token"].as_str(),
+            created["host_id"].as_str(),
+        ) {
+            (Some(room), Some(token), Some(host)) => {
+                Ok((room.to_owned(), token.to_owned(), host.to_owned()))
+            }
             _ => Err(format!("POST /rooms: unexpected body {body}")),
         }
     }

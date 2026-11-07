@@ -17,6 +17,7 @@ use crate::{AppState, SharedRoom, lock};
 const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
 const CLOSE_INVALID_TOKEN: (u16, &str) = (4001, "invalid token");
 const CLOSE_ROOM_NOT_FOUND: (u16, &str) = (4004, "room not found");
+const CLOSE_ROOM_LOCKED: (u16, &str) = (4003, "room locked");
 /// How long a refused socket waits for the client's close reply.
 const CLOSE_GRACE: Duration = Duration::from_secs(5);
 
@@ -65,14 +66,20 @@ async fn refuse(mut socket: WebSocket, code: u16, reason: &'static str) {
 
 async fn run(mut socket: WebSocket, room: SharedRoom) {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let conn = {
+    let (conn, locked) = {
         let mut room = lock(&room);
         if room.expired {
-            None
+            (None, false)
+        } else if room.locked {
+            (None, true)
         } else {
-            Some(room.attach(tx))
+            (Some(room.attach(tx)), false)
         }
     };
+    if locked {
+        refuse(socket, CLOSE_ROOM_LOCKED.0, CLOSE_ROOM_LOCKED.1).await;
+        return;
+    }
     let Some(conn) = conn else {
         refuse(socket, 4006, "room expired").await;
         return;
@@ -108,6 +115,10 @@ async fn run(mut socket: WebSocket, room: SharedRoom) {
                     }
                     Outgoing::Full => {
                         let _ = socket.send(Message::Close(Some(CloseFrame { code: 4003, reason: "room full".into() }))).await;
+                        break;
+                    }
+                    Outgoing::Kicked => {
+                        let _ = socket.send(Message::Close(Some(CloseFrame { code: 4005, reason: "kicked".into() }))).await;
                         break;
                     }
                 }

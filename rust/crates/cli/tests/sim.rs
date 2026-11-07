@@ -191,6 +191,7 @@ async fn assert_converged(a: &mut WtPlay, b: &mut WtPlay, pb: &Playback, after: 
 async fn two_simulated_clients_converge_after_play_and_seek() {
     let server = Server::start().await;
     let room = server.create_room().await;
+    server.room(&room.room_id).lock().unwrap().controls = "all".into();
     let mut a = WtPlay::join(&server, &room, "ann");
     let mut b = WtPlay::join(&server, &room, "bob");
     let mut users = Vec::new();
@@ -253,6 +254,7 @@ async fn create_prints_a_joinable_room() {
     let info = RoomInfo {
         room_id,
         join_token: token,
+        host_id: host_user.clone(),
     };
     let (probe, welcome) = server.join("probe", &info).await;
     let mut expected = vec![host_user, "probe".to_owned()];
@@ -286,6 +288,7 @@ async fn refused_token_exits_with_an_error() {
     let bad = RoomInfo {
         room_id: room.room_id.clone(),
         join_token: "nope.nope".into(),
+        host_id: room.host_id.clone(),
     };
     let mut c = WtPlay::join(&server, &bad, "eve");
     // `c.stdin` stays open, as on a terminal: the 4001 close alone has to end the process.

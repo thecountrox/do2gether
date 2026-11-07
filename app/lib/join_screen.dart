@@ -33,6 +33,9 @@ class _JoinScreenState extends State<JoinScreen> {
   final _room = TextEditingController();
   final _token = TextEditingController();
   final _name = TextEditingController(text: Platform.localHostname);
+  String? _hostId;
+  String? _createdRoom;
+  String? _createdToken;
   bool _creating = false;
 
   @override
@@ -52,6 +55,9 @@ class _JoinScreenState extends State<JoinScreen> {
           .timeout(const Duration(seconds: 15));
       _room.text = created.roomId;
       _token.text = created.token;
+      _hostId = created.hostId;
+      _createdRoom = created.roomId;
+      _createdToken = created.token;
     } on Object catch (e) {
       _snack('Create room failed: $e');
     } finally {
@@ -60,7 +66,7 @@ class _JoinScreenState extends State<JoinScreen> {
     }
   }
 
-  Future<({String roomId, String token})> _postRooms(HttpClient client, Uri server) async {
+  Future<({String roomId, String token, String hostId})> _postRooms(HttpClient client, Uri server) async {
     final request = await client.postUrl(roomsUri(server));
     final response = await request.close();
     final body = await response.transform(utf8.decoder).join();
@@ -68,8 +74,8 @@ class _JoinScreenState extends State<JoinScreen> {
       throw HttpException('HTTP ${response.statusCode}');
     }
     final json = jsonDecode(body);
-    if (json case {'room_id': String roomId, 'join_token': String token}) {
-      return (roomId: roomId, token: token);
+    if (json case {'room_id': String roomId, 'join_token': String token, 'host_id': String hostId}) {
+      return (roomId: roomId, token: token, hostId: hostId);
     }
     throw const FormatException('unexpected response from POST /rooms');
   }
@@ -77,6 +83,7 @@ class _JoinScreenState extends State<JoinScreen> {
   void _join() {
     if (!_form.currentState!.validate()) return;
     final name = _name.text.trim();
+    final hostId = _room.text.trim() == _createdRoom && _token.text.trim() == _createdToken ? _hostId : null;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => RoomScreen(
@@ -84,6 +91,7 @@ class _JoinScreenState extends State<JoinScreen> {
           room: _room.text.trim(),
           token: _token.text.trim(),
           name: name.isEmpty ? Platform.localHostname : name,
+          clientId: hostId,
         ),
       ),
     );

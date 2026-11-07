@@ -62,17 +62,17 @@ async fn run(args: Args) -> Result<(), String> {
         None => (None, media::empty_item_ref()),
     };
 
-    let (room, token) = match args.join {
+    let (room, token, host_id) = match args.join {
         Join::Create => {
-            let (room, token) = server.create_room().await?;
+            let (room, token, host_id) = server.create_room().await?;
             println!("room: {room}");
             println!(
                 "share: wt-play --server {} --room {room} --token {token} --file <path>",
                 args.server
             );
-            (room, token)
+            (room, token, Some(host_id))
         }
-        Join::Room { id, token } => (id, token),
+        Join::Room { id, token } => (id, token, None),
     };
 
     let player = match file {
@@ -91,7 +91,7 @@ async fn run(args: Args) -> Result<(), String> {
     };
     let (sink, stream) = ws.split();
 
-    let user_id = user_id();
+    let user_id = host_id.unwrap_or_else(user_id);
     println!("user: {user_id} name: {}", args.name);
     let out = Outbox::new(&room, &user_id);
     let session = Session::new(sink, out, Clock::new(), player, item_ref);

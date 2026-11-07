@@ -7,12 +7,14 @@ use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use futures_util::{SinkExt, StreamExt};
 use hmac::{Hmac, Mac};
 use hyper::{Method, StatusCode};
 use serde_json::{Value, json};
 use sha2::Sha256;
 use support::*;
 use tokio::time::sleep;
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 use wt_protocol::Observed;
 use wt_server::tokens::{sign_token, sign_token_with_ttl, verify_token};
 
@@ -43,6 +45,12 @@ fn harness_schema_validator_accepts_valid_and_rejects_off_schema_messages() {
     no_rev.as_object_mut().unwrap().remove("rev");
     assert!(!validate_message(&no_rev).is_empty());
 
+    let mut welcome = json!({"v":1,"t":"welcome","room":"r","seq":0,"ts":0,"from":"server", "server_now":0,
+        "snapshot":{"rev":0,"playback":null,"queue":[],"presence":[],"meta":{"host_id":"h","host_name":"Host","controls":"host","locked":false}}});
+    assert!(validate_message(&welcome).is_empty());
+    welcome["snapshot"]["meta"]["controls"] = json!("everyone");
+    assert!(!validate_message(&welcome).is_empty());
+
     let reject = json!({ "v": 1, "t": "reject", "room": "r", "seq": 0, "ts": 0, "from": "server",
                          "code": "intent_rejected", "message": "nothing is playing", "req_id": "r1" });
     assert_eq!(validate_message(&reject), Vec::<String>::new());
@@ -64,6 +72,7 @@ async fn ac1_post_rooms_returns_room_id_and_join_token() {
     let b = server.create_room().await;
 
     for r in [&a, &b] {
+        assert!(!r.host_id.is_empty());
         assert_eq!(r.room_id.len(), 8, "{}", r.room_id);
         assert!(
             r.room_id
@@ -336,7 +345,11 @@ async fn ac8_rev_and_seq_increase_monotonically_across_five_intents() {
     ];
     let (mut seen_a, mut seen_b) = (Vec::new(), Vec::new());
     for (i, (op, args)) in ops.into_iter().enumerate() {
-        let sender = if i % 2 == 0 { &mut a } else { &mut b };
+        let sender = if i % 2 == 0 && op == "queue_add" {
+            &mut b
+        } else {
+            &mut a
+        };
         sender.intent(op, args).await;
         seen_a.push(a.next("state").await);
         seen_b.push(b.next("state").await);
@@ -723,7 +736,7 @@ async fn presence_is_keyed_by_user_across_connections() {
         "a second connection does not announce a join"
     );
 
-    b.intent("play", json!({ "item_ref": CLIP })).await;
+    a2.intent("play", json!({ "item_ref": CLIP })).await;
     a2.next("state").await;
 
     a1.close().await;
@@ -751,4 +764,89 @@ async fn valid_token_for_unknown_room_closes_with_4004() {
         .await;
     assert_eq!(code, 4004);
     assert_eq!(messages, 0);
+}
+
+#[tokio::test]
+async fn host_controls_permissions_and_meta_are_broadcast() {
+    let server = Server::start().await;
+    let room = server.create_room().await;
+    let (mut host, welcome) = server.join("alice", &room).await;
+    let (mut guest, _) = server.join("guest", &room).await;
+    host.next("presence").await;
+    assert_eq!(
+        welcome["snapshot"]["meta"],
+        json!({"host_id":"alice","host_name":"alice","controls":"host","locked":false})
+    );
+    guest.intent("play", json!({"item_ref": FILM})).await;
+    assert_eq!(guest.next("reject").await["code"], "not_host");
+    guest.intent("queue_add", json!({"item_ref": SONG})).await;
+    assert_eq!(guest.next("state").await["rev"], 1);
+    host.next("state").await;
+    host.intent("set_controls", json!({"controls":"all"})).await;
+    let updated = guest.next("state").await;
+    assert_eq!(updated["rev"], 2);
+    assert_eq!(updated["meta"]["controls"], "all");
+    host.next("state").await;
+    guest.intent("play", json!({"item_ref": FILM})).await;
+    assert_eq!(guest.next("state").await["rev"], 3);
+    host.next("state").await;
+    guest.intent("lock", json!({"locked":true})).await;
+    assert_eq!(guest.next("reject").await["code"], "not_host");
+    host.intent("lock", json!({"locked":true})).await;
+    let locked = host.next("state").await;
+    assert_eq!(locked["meta"]["locked"], true);
+    guest.next("state").await;
+    assert_eq!(
+        server.connect_expecting_close(&room.room_id, "bad").await.0,
+        4001
+    );
+    assert_eq!(
+        server
+            .connect_expecting_close(&room.room_id, &room.join_token)
+            .await
+            .0,
+        4003
+    );
+    guest.intent("pause", json!({})).await;
+    assert_eq!(guest.next("reject").await["code"], "locked");
+    host.intent("play", json!({"item_ref": FILM})).await;
+    assert_eq!(host.next("state").await["meta"]["locked"], true);
+    guest.next("state").await;
+    host.intent("lock", json!({"locked":false})).await;
+    assert_eq!(host.next("state").await["meta"]["locked"], false);
+    let (_, fresh) = server.join("fresh", &room).await;
+    assert_eq!(fresh["snapshot"]["meta"]["controls"], "all");
+    assert_eq!(fresh["snapshot"]["meta"]["locked"], false);
+}
+
+#[tokio::test]
+async fn kick_closes_every_target_connection_and_removes_presence() {
+    let server = Server::start().await;
+    let room = server.create_room().await;
+    let (mut host, _) = server.join("alice", &room).await;
+    let (mut raw, _) = connect_async(server.ws_url(&room.room_id, &room.join_token))
+        .await
+        .unwrap();
+    raw.send(Message::text(json!({"v":1,"t":"hello","room":room.room_id,"seq":0,"ts":now_ms(),"from":"guest","proto":1,"client":{"id":"guest","name":"guest","ver":"test"}}).to_string())).await.unwrap();
+    let welcome = raw.next().await.unwrap().unwrap();
+    assert!(matches!(welcome, Message::Text(_)));
+    let (_guest2, _) = server.join("guest", &room).await;
+    host.next("presence").await;
+    host.intent("kick", json!({"user_id":"alice"})).await;
+    assert_eq!(host.next("reject").await["code"], "intent_rejected");
+    host.intent("kick", json!({"user_id":"guest"})).await;
+    assert_eq!(host.next("presence").await["action"], "leave");
+    server.wait_for_clients(&room.room_id, 1).await;
+    assert_eq!(server.room(&room.room_id).lock().unwrap().member_count(), 1);
+    assert_eq!(server.room(&room.room_id).lock().unwrap().rev, 0);
+    let frame = tokio::time::timeout(Duration::from_secs(1), raw.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let Message::Close(Some(frame)) = frame else {
+        panic!("expected kicked close: {frame:?}")
+    };
+    assert_eq!(u16::from(frame.code), 4005);
+    assert_eq!(frame.reason, "kicked");
 }

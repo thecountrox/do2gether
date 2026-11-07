@@ -40,7 +40,8 @@ class RoomClient {
     required this.name,
     required this.onMessage,
     required this.onChange,
-  }) : clientId = 'flutter-${_randomHex(6)}';
+    String? clientId,
+  }) : clientId = clientId ?? 'flutter-${_randomHex(6)}';
 
   final Uri server;
   final String room;

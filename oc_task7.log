@@ -1,0 +1,920 @@
+[0m
+> build · devin/gpt-6-sol
+[0m
+[0m# [0mTodos
+[•] Read task, architecture, schema, and Rust/Flutter implementation to identify required changes
+[ ] Implement schema, Rust permissions/host controls/snapshot meta, and Flutter protocol updates with tests
+[ ] Run Rust and Flutter checks and report permission matrix, files, test counts
+[0m
+[0m→ [0mRead TASK7.md
+[0m✱ [0mGlob "**/*.rs"[90m 25 matches[0m
+[0m→ [0mRead docs/05-backend-architecture.md
+[0m✱ [0mGlob "app/**/*.dart"[90m 12 matches[0m
+[0m→ [0mRead protocol/room.schema.json
+[0m→ [0mRead rust/crates/server/src/ws.rs
+[0m→ [0mRead rust/crates/server/src/store.rs
+[0m→ [0mRead rust/crates/server/src/room.rs
+[0m→ [0mRead rust/crates/server/src/lib.rs
+[0m→ [0mRead rust/crates/protocol/src/message.rs
+[0m→ [0mRead app/test/protocol_test.dart
+[0m→ [0mRead app/lib/protocol.dart
+[0m→ [0mRead rust/crates/protocol/src/types.rs
+[0m✱ [0mGrep "Snapshot \{|ServerMsg::State|host_id|snapshot\.|intentOps"[90m in . · 26 matches[0m
+[0m→ [0mRead rust/crates/protocol/src/lib.rs
+[0m→ [0mRead rust/crates/server/tests/persistence.rs
+[0m→ [0mRead rust/crates/server/tests/room.rs
+[0m→ [0mRead rust/crates/server/tests/support/mod.rs
+[0m
+[0m# [0mTodos
+[✓] Read task, architecture, schema, and Rust/Flutter implementation to identify required changes
+[•] Implement schema, Rust permissions/host controls/snapshot meta, and Flutter protocol updates with tests
+[ ] Run Rust and Flutter checks and report permission matrix, files, test counts
+[0m
+The persistence layer already has columns for host metadata, controls, and lock state, but room creation leaves the host unset. I’ll make creation establish a host, then enforce permissions in the room state machine and expose meta in welcome and state messages.
+[0m% [0mPatch 1 file
+[0m% [0mPatch 4 files
+[0m% [0mPatch 1 file
+[0m% [0mPatch 1 file
+[0m→ [0mRead app/test/live_room_test.dart
+[0m→ [0mRead app/lib/room_client.dart[90m [limit=140][0m
+[0m% [0mPatch 3 files
+[0m
+[0m$ [0mcargo test
+error: could not find `Cargo.toml` in `/home/ubuntu/watch-together` or any parent directory
+[0m
+[0m$ [0mcargo test
+Compiling wt-protocol v0.1.0 (/home/ubuntu/watch-together/rust/crates/protocol)
+   Compiling wt-server v0.1.0 (/home/ubuntu/watch-together/rust/crates/server)
+error: future cannot be sent between threads safely
+   --> crates/server/src/ws.rs:48:10
+    |
+ 48 |         .on_upgrade(move |socket| async move {
+    |          ^^^^^^^^^^ future created by async block is not `Send`
+    |
+    = help: within `{async block@crates/server/src/ws.rs:48:35: 48:45}`, the trait `Send` is not implemented for `std::sync::MutexGuard<'_, Room>`
+note: future is not `Send` as this value is used across an await
+   --> crates/server/src/ws.rs:75:70
+    |
+ 70 |         let mut room = lock(&room);
+    |             -------- has type `std::sync::MutexGuard<'_, Room>` which is not `Send`
+...
+ 75 |             refuse(socket, CLOSE_ROOM_LOCKED.0, CLOSE_ROOM_LOCKED.1).await;
+    |                                                                      ^^^^^ await occurs here, with `mut room` maybe used later
+note: required by a bound in `WebSocketUpgrade::<F>::on_upgrade`
+   --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/axum-0.8.9/src/extract/ws.rs:350:36
+    |
+347 |     pub fn on_upgrade<C, Fut>(self, callback: C) -> Response
+    |            ---------- required by a bound in this associated function
+...
+350 |         Fut: Future<Output = ()> + Send + 'static,
+    |                                    ^^^^ required by this bound in `WebSocketUpgrade::<F>::on_upgrade`
+
+error: could not compile `wt-server` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+[0m
+[0m% [0mPatch 1 file
+[0m
+[0m$ [0mcargo test
+Compiling wt-server v0.1.0 (/home/ubuntu/watch-together/rust/crates/server)
+   Compiling wt-cli v0.1.0 (/home/ubuntu/watch-together/rust/crates/cli)
+error[E0063]: missing field `host_id` in initializer of `RoomInfo`
+   --> crates/cli/tests/sim.rs:253:16
+    |
+253 |     let info = RoomInfo {
+    |                ^^^^^^^^ missing `host_id`
+
+error[E0063]: missing field `host_id` in initializer of `RoomInfo`
+   --> crates/cli/tests/sim.rs:286:15
+    |
+286 |     let bad = RoomInfo {
+    |               ^^^^^^^^ missing `host_id`
+
+For more information about this error, try `rustc --explain E0063`.
+error: could not compile `wt-cli` (test "sim") due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
+[0m
+[0m→ [0mRead rust/crates/cli/tests/sim.rs[90m [offset=235, limit=65][0m
+[0m% [0mPatch 1 file
+[0m
+[0m$ [0mcargo test
+Compiling wt-cli v0.1.0 (/home/ubuntu/watch-together/rust/crates/cli)
+   Compiling wt-server v0.1.0 (/home/ubuntu/watch-together/rust/crates/server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 19.07s
+     Running unittests src/main.rs (target/debug/deps/wt_play-3bee59d03eb2951c)
+
+running 11 tests
+test args::tests::flags_parse_and_conflicts_are_refused ... ok
+test clock::tests::burst_takes_the_median_and_ignores_outliers ... ok
+test clock::tests::four_timestamp_sample ... ok
+test drift::tests::policy_table_at_the_boundaries ... ok
+test net::tests::https_urls_map_to_wss_urls ... ok
+test net::tests::server_urls_map_to_ws_urls ... ok
+test player::tests::sim_models_load_seek_pause_and_speed ... ok
+test session::tests::anchor_math ... ok
+test wire::tests::every_outbound_message_validates_against_the_schema ... ok
+test wire::tests::inbound_parsing_keeps_what_the_client_needs ... ok
+test media::tests::refs_match_the_grammar_and_cover_head_and_tail ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.63s
+
+
+running 4 tests
+test live_tls_roundtrip ... ignored, needs the network and the deployed server
+     Running tests/sim.rs (target/debug/deps/sim-38c17a6d8fdca093)
+test refused_token_exits_with_an_error ... ok
+test create_prints_a_joinable_room ... ok
+test two_simulated_clients_converge_after_play_and_seek ... FAILED
+
+failures:
+
+---- two_simulated_clients_converge_after_play_and_seek stdout ----
+rejected: host only
+
+thread 'two_simulated_clients_converge_after_play_and_seek' (470145) panicked at crates/cli/tests/sim.rs:157:9:
+room never reached the expected playback
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    two_simulated_clients_converge_after_play_and_seek
+
+test result: FAILED. 2 passed; 1 failed; 1 ignored; 0 measured; 0 filtered out; finished in 5.12s
+
+error: test failed, to rerun pass `-p wt-cli --test sim`
+[0m
+[0m$ [0mgit status --short
+M app/lib/protocol.dart
+ M protocol/room.schema.json
+ M rust/crates/cli/tests/sim.rs
+ M rust/crates/protocol/src/lib.rs
+ M rust/crates/protocol/src/message.rs
+ M rust/crates/server/src/lib.rs
+ M rust/crates/server/src/room.rs
+ M rust/crates/server/src/ws.rs
+ M rust/crates/server/tests/persistence.rs
+ M rust/crates/server/tests/room.rs
+ M rust/crates/server/tests/support/mod.rs
+?? oc_task7.log
+[0m
+[0m✱ [0mGrep "create|host_id|client_id|user_id|user:"[90m in rust/crates/cli/src · 22 matches[0m
+[0m→ [0mRead rust/crates/cli/tests/sim.rs[90m [offset=165, limit=75][0m
+[0m→ [0mRead rust/crates/cli/src/net.rs[90m [offset=85, limit=48][0m
+[0m→ [0mRead rust/crates/cli/src/main.rs[90m [limit=135][0m
+[0m% [0mPatch 4 files
+[0m% [0mPatch 3 files
+[0m% [0mPatch 2 files
+[0m% [0mPatch 1 file
+[0m✱ [0mGrep "_guest|guest.intent|let \(mut raw|let \(mut guest"[90m in rust/crates/server/tests/room.rs · 8 matches[0m
+[0m% [0mPatch 1 file
+[0m
+[0m$ [0mcargo test
+Compiling wt-protocol v0.1.0 (/home/ubuntu/watch-together/rust/crates/protocol)
+   Compiling wt-server v0.1.0 (/home/ubuntu/watch-together/rust/crates/server)
+   Compiling wt-cli v0.1.0 (/home/ubuntu/watch-together/rust/crates/cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 19.88s
+     Running unittests src/main.rs (target/debug/deps/wt_play-3bee59d03eb2951c)
+
+running 11 tests
+test args::tests::flags_parse_and_conflicts_are_refused ... ok
+test clock::tests::four_timestamp_sample ... ok
+test drift::tests::policy_table_at_the_boundaries ... ok
+test clock::tests::burst_takes_the_median_and_ignores_outliers ... ok
+test net::tests::https_urls_map_to_wss_urls ... ok
+test net::tests::server_urls_map_to_ws_urls ... ok
+test player::tests::sim_models_load_seek_pause_and_speed ... ok
+test session::tests::anchor_math ... ok
+test wire::tests::every_outbound_message_validates_against_the_schema ... ok
+test wire::tests::inbound_parsing_keeps_what_the_client_needs ... ok
+test media::tests::refs_match_the_grammar_and_cover_head_and_tail ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.50s
+
+     Running tests/sim.rs (target/debug/deps/sim-38c17a6d8fdca093)
+
+running 4 tests
+test live_tls_roundtrip ... ignored, needs the network and the deployed server
+test refused_token_exits_with_an_error ... ok
+test create_prints_a_joinable_room ... ok
+test two_simulated_clients_converge_after_play_and_seek ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 6.05s
+
+     Running unittests src/lib.rs (target/debug/deps/wt_protocol-8c2225486e359376)
+
+running 11 tests
+test item_ref::tests::parses_every_scheme ... ok
+test message::tests::encode_wraps_the_body_in_a_server_envelope ... ok
+test item_ref::tests::rejects_everything_the_pattern_rejects ... ok
+test message::tests::envelope_errors_are_ignorable ... ok
+test message::tests::hello_and_report_validation ... ok
+test message::tests::integers_follow_number_is_safe_integer ... ok
+test message::tests::host_intents_parse_and_validate_arguments ... ok
+test types::tests::integral_rate_serializes_as_an_integer ... ok
+test types::tests::position_at_follows_the_anchor ... ok
+test message::tests::intent_args_are_validated_like_the_reference ... ok
+test types::tests::position_at_rounds_like_js_math_round ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/wt_server-4d3b6af4fc69dca3)
+     Running unittests src/main.rs (target/debug/deps/wt_server-46ff8f728966d6d3)
+
+running 1 test
+test tokens::tests::rejects_non_canonical_signature_encodings ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 8 tests
+     Running tests/persistence.rs (target/debug/deps/persistence-ee7b6a3e005c6373)
+test failed_database_open_keeps_room_serving_degraded ... ok
+test expiry_on_boot_and_sweep_closes_sockets ... ok
+test invalid_json_room_is_skipped_and_other_rooms_load ... ok
+test migrations_are_idempotent ... ok
+test restart_restores_playback_queue_revision_and_metadata ... ok
+test room_cap_and_per_ip_token_bucket ... ok
+test write_failure_marks_room_degraded_without_rejecting_intents ... ok
+test member_and_queue_caps_refuse_only_new_entries ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.76s
+
+     Running tests/room.rs (target/debug/deps/room-bd8736694ae855ab)
+
+running 21 tests
+test ac1_post_rooms_returns_room_id_and_join_token ... ok
+test ac10_report_is_stored_per_client_and_never_broadcast ... ok
+test ac3_hello_welcome_and_presence_join ... ok
+test ac4_clock_offset_over_10_pings_is_within_50ms ... ok
+test ac5_play_reaches_other_client_as_state_within_500ms ... ok
+test ac2_bad_tokens_are_closed_with_4001_and_never_join ... ok
+test ac7_seek_sets_position_and_preserves_item_rate_paused ... ok
+test ac8_rev_and_seq_increase_monotonically_across_five_intents ... ok
+test ac6_pause_freezes_position_at_elapsed_time ... ok
+test harness_schema_validator_accepts_valid_and_rejects_off_schema_messages ... ok
+test ac9_reconnecting_client_gets_welcome_matching_latest_state ... ok
+test http_health_is_ok_and_everything_else_is_404 ... ok
+test host_controls_permissions_and_meta_are_broadcast ... ok
+test kick_closes_every_target_connection_and_removes_presence ... ok
+test presence_is_keyed_by_user_across_connections ... ok
+test queue_add_remove_and_skip ... ok
+test refused_intents_get_a_reject_to_the_sender_only ... ok
+test rooms_are_isolated ... ok
+test malformed_input_is_ignored_without_disconnecting ... ok
+test seq_counts_every_broadcast_while_rev_counts_only_content ... ok
+test valid_token_for_unknown_room_closes_with_4004 ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+
+   Doc-tests wt_protocol
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests wt_server
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[0m
+[0m% [0mPatch 2 files
+The Rust suite now passes with host identity enforced. One compatibility detail needed attention: CLI and live Flutter room creators must join using the returned `host_id`; otherwise their playback intents are correctly refused. I’ve updated those paths and am checking persistence and protocol behavior next.
+[0m
+[0m$ [0mcargo fmt
+error: no such command: `fmt`
+
+help: a command with a similar name exists: `fix`
+
+help: view all installed commands with `cargo --list`
+help: find a package to install `fmt` with `cargo search cargo-fmt`
+[0m
+[0m$ [0mnix shell nixpkgs#flutter -c bash -c "cd app && flutter analyze && flutter test"
+Analyzing app...                                                
+No issues found! (ran in 25.4s)
+00:00 +0: loading /home/ubuntu/watch-together/app/test/clock_test.dart
+00:00 +0: /home/ubuntu/watch-together/app/test/clock_test.dart: four-timestamp sample
+00:00 +1: /home/ubuntu/watch-together/app/test/clock_test.dart: median
+00:00 +2: /home/ubuntu/watch-together/app/test/clock_test.dart: a burst of synthetic samples gives the median offset and rtt
+00:00 +3: /home/ubuntu/watch-together/app/test/clock_test.dart: outliers do not move the estimate
+00:00 +4: /home/ubuntu/watch-together/app/test/clock_test.dart: a refresh drops the partial burst and keeps the last estimate
+00:00 +5: loading /home/ubuntu/watch-together/app/test/protocol_test.dart
+00:01 +5: /home/ubuntu/watch-together/app/test/protocol_test.dart: envelope every message type roundtrips through encode/decode
+00:01 +6: /home/ubuntu/watch-together/app/test/protocol_test.dart: envelope encodes the schema envelope with id only when present
+00:01 +7: /home/ubuntu/watch-together/app/test/protocol_test.dart: envelope decodes a server state and its anchor
+00:01 +8: /home/ubuntu/watch-together/app/test/protocol_test.dart: envelope meta is optional for old welcomes and validated when present
+00:01 +9: /home/ubuntu/watch-together/app/test/protocol_test.dart: envelope host intents are recognized
+00:01 +10: /home/ubuntu/watch-together/app/test/protocol_test.dart: ignored input unknown type is ignored
+00:01 +11: /home/ubuntu/watch-together/app/test/protocol_test.dart: ignored input invalid messages are ignored, never thrown
+00:01 +12: /home/ubuntu/watch-together/app/test/protocol_test.dart: ignored input integral floats count as integers, like JSON Schema
+00:01 +13: /home/ubuntu/watch-together/app/test/protocol_test.dart: item_ref grammar accepts the four prefixes
+00:01 +14: /home/ubuntu/watch-together/app/test/protocol_test.dart: item_ref grammar rejects everything else
+00:01 +15: /home/ubuntu/watch-together/app/test/protocol_test.dart: endpoints ws and rooms URLs keep host, port and path
+00:01 +16: loading /home/ubuntu/watch-together/app/test/widget_test.dart
+00:02 +16: /home/ubuntu/watch-together/app/test/widget_test.dart: JoinScreen rejects an empty room
+00:04 +17: /home/ubuntu/watch-together/app/test/widget_test.dart: JoinScreen rejects a bad URL
+00:05 +18: /home/ubuntu/watch-together/app/test/widget_test.dart: validateServerUrl accepts http and https only
+00:05 +19: loading /home/ubuntu/watch-together/app/test/live_room_test.dart
+00:06 +19: /home/ubuntu/watch-together/app/test/live_room_test.dart: live: create a room, join it, play, and receive state
+  Skip: set WT_LIVE=1 to run against a live server
+00:06 +19 ~1: loading /home/ubuntu/watch-together/app/test/player_test.dart
+00:08 +19 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: positionAt playing advances with server time
+00:08 +20 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: positionAt paused holds the anchor position whatever the time
+00:08 +21 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: positionAt rate scales elapsed time
+00:08 +22 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: positionAt negative elapsed extrapolates backwards, never before 0
+00:08 +23 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: positionAt rounds like JS Math.round
+00:08 +24 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: item_ref of a local file small file: size + the whole-file hash twice
+00:08 +25 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: item_ref of a local file empty file matches the Rust client
+00:08 +26 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: item_ref of a local file large file: first and last 4 MiB, each byte range seen
+00:10 +27 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: drift policy bands
+00:10 +28 ~1: All tests passed!
+[0m
+[0m$ [0mgit diff --stat
+app/lib/protocol.dart                   | 46 +++++++++++++++++---
+ app/lib/room_client.dart                |  3 +-
+ app/test/live_room_test.dart            |  3 ++
+ app/test/protocol_test.dart             | 20 ++++++++-
+ protocol/room.schema.json               | 18 ++++++--
+ rust/crates/cli/src/main.rs             | 10 ++---
+ rust/crates/cli/src/net.rs              |  8 ++--
+ rust/crates/cli/tests/sim.rs            |  3 ++
+ rust/crates/protocol/src/lib.rs         |  2 +-
+ rust/crates/protocol/src/message.rs     | 55 +++++++++++++++++++++++
+ rust/crates/server/src/lib.rs           | 13 +++---
+ rust/crates/server/src/room.rs          | 72 +++++++++++++++++++++++++++---
+ rust/crates/server/src/ws.rs            | 17 ++++++--
+ rust/crates/server/tests/persistence.rs | 13 ++++--
+ rust/crates/server/tests/room.rs        | 77 ++++++++++++++++++++++++++++++++-
+ rust/crates/server/tests/support/mod.rs |  3 +-
+ 16 files changed, 321 insertions(+), 42 deletions(-)
+[0m
+[0m$ [0mcargo clippy --all-targets -- -D warnings
+error: no such command: `clippy`
+
+help: view all installed commands with `cargo --list`
+help: find a package to install `clippy` with `cargo search cargo-clippy`
+[0m
+[0m$ [0mcargo fmt --check
+error: no such command: `fmt`
+
+help: a command with a similar name exists: `fix`
+
+help: view all installed commands with `cargo --list`
+help: find a package to install `fmt` with `cargo search cargo-fmt`
+[0m
+[0m$ [0mrustup component list --installed
+/usr/bin/bash: line 1: rustup: command not found
+[0m
+[0m$ [0mnix shell nixpkgs#rustfmt nixpkgs#clippy -c bash -c 'cargo fmt --check && cargo clippy --all-targets -- -D warnings'
+Diff in /home/ubuntu/watch-together/rust/crates/cli/src/../../server/tests/support/mod.rs:361:
+     }
+ 
+     pub async fn create_room(&self) -> RoomInfo {
+-        let (status, _, body) = self.http_body(Method::POST, "/rooms", json!({"host_id":"alice", "host_name":"alice"}).to_string().into()).await;
++        let (status, _, body) = self
++            .http_body(
++                Method::POST,
++                "/rooms",
++                json!({"host_id":"alice", "host_name":"alice"})
++                    .to_string()
++                    .into(),
++            )
++            .await;
+         assert_eq!(status, StatusCode::CREATED);
+         serde_json::from_slice(&body).unwrap()
+     }
+Diff in /home/ubuntu/watch-together/rust/crates/cli/src/net.rs:117:
+             return Err(format!("POST /rooms: HTTP {status}"));
+         }
+         let created: Value = serde_json::from_str(body).map_err(|e| format!("POST /rooms: {e}"))?;
+-        match (created["room_id"].as_str(), created["join_token"].as_str(), created["host_id"].as_str()) {
+-            (Some(room), Some(token), Some(host)) => Ok((room.to_owned(), token.to_owned(), host.to_owned())),
++        match (
++            created["room_id"].as_str(),
++            created["join_token"].as_str(),
++            created["host_id"].as_str(),
++        ) {
++            (Some(room), Some(token), Some(host)) => {
++                Ok((room.to_owned(), token.to_owned(), host.to_owned()))
++            }
+             _ => Err(format!("POST /rooms: unexpected body {body}")),
+         }
+     }
+Diff in /home/ubuntu/watch-together/rust/crates/cli/tests/../../server/tests/support/mod.rs:361:
+     }
+ 
+     pub async fn create_room(&self) -> RoomInfo {
+-        let (status, _, body) = self.http_body(Method::POST, "/rooms", json!({"host_id":"alice", "host_name":"alice"}).to_string().into()).await;
++        let (status, _, body) = self
++            .http_body(
++                Method::POST,
++                "/rooms",
++                json!({"host_id":"alice", "host_name":"alice"})
++                    .to_string()
++                    .into(),
++            )
++            .await;
+         assert_eq!(status, StatusCode::CREATED);
+         serde_json::from_slice(&body).unwrap()
+     }
+Diff in /home/ubuntu/watch-together/rust/crates/protocol/src/message.rs:84:
+         item_ref: String,
+     },
+     Skip,
+-    SetControls { controls: String },
+-    Lock { locked: bool },
+-    Kick { user_id: String },
++    SetControls {
++        controls: String,
++    },
++    Lock {
++        locked: bool,
++    },
++    Kick {
++        user_id: String,
++    },
+ }
+ 
+ /// Why an intent is refused. The `Display` text is the `reject.message`.
+Diff in /home/ubuntu/watch-together/rust/crates/protocol/src/message.rs:178:
+             }),
+             "skip" => args().map(|_| Intent::Skip),
+             "set_controls" => args().and_then(|a| match a.get("controls") {
+-                Some(Value::String(s)) if s == "host" || s == "all" => {
+-                    Ok(Intent::SetControls { controls: s.clone() })
+-                }
++                Some(Value::String(s)) if s == "host" || s == "all" => Ok(Intent::SetControls {
++                    controls: s.clone(),
++                }),
+                 _ => Err(IntentError::InvalidControls),
+             }),
+             "lock" => args().and_then(|a| match a.get("locked") {
+Diff in /home/ubuntu/watch-together/rust/crates/protocol/src/message.rs:188:
+                 _ => Err(IntentError::InvalidLocked),
+             }),
+             "kick" => args().and_then(|a| match a.get("user_id") {
+-                Some(Value::String(s)) if !s.is_empty() => {
+-                    Ok(Intent::Kick { user_id: s.clone() })
+-                }
++                Some(Value::String(s)) if !s.is_empty() => Ok(Intent::Kick { user_id: s.clone() }),
+                 _ => Err(IntentError::InvalidUserId),
+             }),
+             _ => return None,
+Diff in /home/ubuntu/watch-together/rust/crates/protocol/src/message.rs:550:
+     #[test]
+     fn host_intents_parse_and_validate_arguments() {
+         for (op, args, expected) in [
+-            ("set_controls", json!({"controls":"all"}), Intent::SetControls { controls: "all".into() }),
+-            ("lock", json!({"locked":true}), Intent::Lock { locked: true }),
+-            ("kick", json!({"user_id":"guest"}), Intent::Kick { user_id: "guest".into() }),
++            (
++                "set_controls",
++                json!({"controls":"all"}),
++                Intent::SetControls {
++                    controls: "all".into(),
++                },
++            ),
++            (
++                "lock",
++                json!({"locked":true}),
++                Intent::Lock { locked: true },
++            ),
++            (
++                "kick",
++                json!({"user_id":"guest"}),
++                Intent::Kick {
++                    user_id: "guest".into(),
++                },
++            ),
+         ] {
+-            assert_eq!(intent(op, args), Ok(ClientMsg::Intent { id: None, intent: Ok(expected) }));
++            assert_eq!(
++                intent(op, args),
++                Ok(ClientMsg::Intent {
++                    id: None,
++                    intent: Ok(expected)
++                })
++            );
+         }
+         for (op, args, error) in [
+-            ("set_controls", json!({"controls":"everyone"}), IntentError::InvalidControls),
++            (
++                "set_controls",
++                json!({"controls":"everyone"}),
++                IntentError::InvalidControls,
++            ),
+             ("lock", json!({"locked":1}), IntentError::InvalidLocked),
+             ("kick", json!({"user_id":""}), IntentError::InvalidUserId),
+         ] {
+Diff in /home/ubuntu/watch-together/rust/crates/server/src/room.rs:216:
+                 }
+                 if let Ok(op) = &intent {
+                     let host = self.host_id.as_deref() == Some(&actor);
+-                    let restricted = matches!(op, Intent::SetControls { .. } | Intent::Lock { .. } | Intent::Kick { .. })
+-                        || (self.controls == "host" && matches!(op, Intent::Play { .. } | Intent::Pause | Intent::Seek { .. } | Intent::Skip));
++                    let restricted = matches!(
++                        op,
++                        Intent::SetControls { .. } | Intent::Lock { .. } | Intent::Kick { .. }
++                    ) || (self.controls == "host"
++                        && matches!(
++                            op,
++                            Intent::Play { .. }
++                                | Intent::Pause
++                                | Intent::Seek { .. }
++                                | Intent::Skip
++                        ));
+                     if restricted && !host {
+                         self.reject_code(conn, id.as_deref(), "not_host", "host only");
+                         return;
+Diff in /home/ubuntu/watch-together/rust/crates/server/src/room.rs:235:
+                     }
+                 }) {
+                     Ok(true) => self.broadcast_state(),
+-                    Ok(false) => {},
++                    Ok(false) => {}
+                     Err(e) => self.reject(conn, id.as_deref(), e),
+                 }
+             }
+Diff in /home/ubuntu/watch-together/rust/crates/server/src/room.rs:387:
+         if actor == user_id {
+             return Err(IntentError::CannotKickSelf);
+         }
+-        let targets: Vec<_> = self.clients.iter()
++        let targets: Vec<_> = self
++            .clients
++            .iter()
+             .filter(|(_, c)| c.user_id.as_deref() == Some(user_id))
+-            .map(|(id, _)| *id).collect();
++            .map(|(id, _)| *id)
++            .collect();
+         if targets.is_empty() {
+             return Err(IntentError::InvalidUserId);
+         }
+Diff in /home/ubuntu/watch-together/rust/crates/server/tests/persistence.rs:38:
+     let played = client.next("state").await;
+     client.intent("queue_add", json!({"item_ref": SONG})).await;
+     let queued = client.next("state").await;
+-    client.intent("set_controls", json!({"controls":"all"})).await;
++    client
++        .intent("set_controls", json!({"controls":"all"}))
++        .await;
+     client.next("state").await;
+     client.intent("lock", json!({"locked":true})).await;
+     let locked = client.next("state").await;
+Diff in /home/ubuntu/watch-together/rust/crates/server/tests/persistence.rs:45:
+-    assert_eq!(locked["meta"], json!({"host_id":"h1","host_name":"Host","controls":"all","locked":true}));
++    assert_eq!(
++        locked["meta"],
++        json!({"host_id":"h1","host_name":"Host","controls":"all","locked":true})
++    );
+     client.close().await;
+     server.wait_for_clients(&info.room_id, 0).await;
+     drop(server);
+Diff in /home/ubuntu/watch-together/rust/crates/server/tests/support/mod.rs:361:
+     }
+ 
+     pub async fn create_room(&self) -> RoomInfo {
+-        let (status, _, body) = self.http_body(Method::POST, "/rooms", json!({"host_id":"alice", "host_name":"alice"}).to_string().into()).await;
++        let (status, _, body) = self
++            .http_body(
++                Method::POST,
++                "/rooms",
++                json!({"host_id":"alice", "host_name":"alice"})
++                    .to_string()
++                    .into(),
++            )
++            .await;
+         assert_eq!(status, StatusCode::CREATED);
+         serde_json::from_slice(&body).unwrap()
+     }
+Diff in /home/ubuntu/watch-together/rust/crates/server/tests/room.rs:6:
+ use std::time::Duration;
+ 
+ use base64::Engine;
+-use futures_util::{SinkExt, StreamExt};
+ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
++use futures_util::{SinkExt, StreamExt};
+ use hmac::{Hmac, Mac};
+ use hyper::{Method, StatusCode};
+ use serde_json::{Value, json};
+Diff in /home/ubuntu/watch-together/rust/crates/server/tests/room.rs:345:
+     ];
+     let (mut seen_a, mut seen_b) = (Vec::new(), Vec::new());
+     for (i, (op, args)) in ops.into_iter().enumerate() {
+-        let sender = if i % 2 == 0 && op == "queue_add" { &mut b } else { &mut a };
++        let sender = if i % 2 == 0 && op == "queue_add" {
++            &mut b
++        } else {
++            &mut a
++        };
+         sender.intent(op, args).await;
+         seen_a.push(a.next("state").await);
+         seen_b.push(b.next("state").await);
+Diff in /home/ubuntu/watch-together/rust/crates/server/tests/room.rs:769:
+     let (mut host, welcome) = server.join("alice", &room).await;
+     let (mut guest, _) = server.join("guest", &room).await;
+     host.next("presence").await;
+-    assert_eq!(welcome["snapshot"]["meta"], json!({"host_id":"alice","host_name":"alice","controls":"host","locked":false}));
++    assert_eq!(
++        welcome["snapshot"]["meta"],
++        json!({"host_id":"alice","host_name":"alice","controls":"host","locked":false})
++    );
+     guest.intent("play", json!({"item_ref": FILM})).await;
+     assert_eq!(guest.next("reject").await["code"], "not_host");
+     guest.intent("queue_add", json!({"item_ref": SONG})).await;
+Diff in /home/ubuntu/watch-together/rust/crates/server/tests/room.rs:789:
+     let locked = host.next("state").await;
+     assert_eq!(locked["meta"]["locked"], true);
+     guest.next("state").await;
+-    assert_eq!(server.connect_expecting_close(&room.room_id, "bad").await.0, 4001);
+-    assert_eq!(server.connect_expecting_close(&room.room_id, &room.join_token).await.0, 4003);
++    assert_eq!(
++        server.connect_expecting_close(&room.room_id, "bad").await.0,
++        4001
++    );
++    assert_eq!(
++        server
++            .connect_expecting_close(&room.room_id, &room.join_token)
++            .await
++            .0,
++        4003
++    );
+     guest.intent("pause", json!({})).await;
+     assert_eq!(guest.next("reject").await["code"], "locked");
+     host.intent("play", json!({"item_ref": FILM})).await;
+Diff in /home/ubuntu/watch-together/rust/crates/server/tests/room.rs:807:
+     let server = Server::start().await;
+     let room = server.create_room().await;
+     let (mut host, _) = server.join("alice", &room).await;
+-    let (mut raw, _) = connect_async(server.ws_url(&room.room_id, &room.join_token)).await.unwrap();
++    let (mut raw, _) = connect_async(server.ws_url(&room.room_id, &room.join_token))
++        .await
++        .unwrap();
+     raw.send(Message::text(json!({"v":1,"t":"hello","room":room.room_id,"seq":0,"ts":now_ms(),"from":"guest","proto":1,"client":{"id":"guest","name":"guest","ver":"test"}}).to_string())).await.unwrap();
+     let welcome = raw.next().await.unwrap().unwrap();
+     assert!(matches!(welcome, Message::Text(_)));
+Diff in /home/ubuntu/watch-together/rust/crates/server/tests/room.rs:820:
+     server.wait_for_clients(&room.room_id, 1).await;
+     assert_eq!(server.room(&room.room_id).lock().unwrap().member_count(), 1);
+     assert_eq!(server.room(&room.room_id).lock().unwrap().rev, 0);
+-    let frame = tokio::time::timeout(Duration::from_secs(1), raw.next()).await.unwrap().unwrap().unwrap();
+-    let Message::Close(Some(frame)) = frame else { panic!("expected kicked close: {frame:?}") };
++    let frame = tokio::time::timeout(Duration::from_secs(1), raw.next())
++        .await
++        .unwrap()
++        .unwrap()
++        .unwrap();
++    let Message::Close(Some(frame)) = frame else {
++        panic!("expected kicked close: {frame:?}")
++    };
+     assert_eq!(u16::from(frame.code), 4005);
+     assert_eq!(frame.reason, "kicked");
+ }
+Diff in /home/ubuntu/watch-together/rust/crates/server/tests/support/mod.rs:361:
+     }
+ 
+     pub async fn create_room(&self) -> RoomInfo {
+-        let (status, _, body) = self.http_body(Method::POST, "/rooms", json!({"host_id":"alice", "host_name":"alice"}).to_string().into()).await;
++        let (status, _, body) = self
++            .http_body(
++                Method::POST,
++                "/rooms",
++                json!({"host_id":"alice", "host_name":"alice"})
++                    .to_string()
++                    .into(),
++            )
++            .await;
+         assert_eq!(status, StatusCode::CREATED);
+         serde_json::from_slice(&body).unwrap()
+     }
+[0m
+[0m$ [0mnix shell nixpkgs#rustfmt nixpkgs#clippy -c bash -c 'cargo fmt && cargo clippy --all-targets -- -D warnings'
+Checking wt-protocol v0.1.0 (/home/ubuntu/watch-together/rust/crates/protocol)
+    Checking wt-server v0.1.0 (/home/ubuntu/watch-together/rust/crates/server)
+    Checking wt-cli v0.1.0 (/home/ubuntu/watch-together/rust/crates/cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.11s
+[0m
+[0m# [0mTodos
+[✓] Read task, architecture, schema, and Rust/Flutter implementation to identify required changes
+[✓] Implement schema, Rust permissions/host controls/snapshot meta, and Flutter protocol updates with tests
+[•] Run Rust and Flutter checks and report permission matrix, files, test counts
+[0m
+[0m% [0mPatch 2 files
+TASK7 has two conflicting locked-room statements: it lists `locked` for intents other than `lock`, but also says the host can still control. I’ve followed the explicit host-control test: guests get `locked` while the room is locked; the host can continue controlling it.
+[0m
+[0m$ [0mnix shell nixpkgs#rustfmt nixpkgs#clippy -c bash -c 'cargo fmt --check && cargo clippy --all-targets -- -D warnings'
+Blocking waiting for file lock on build directory
+    Checking wt-server v0.1.0 (/home/ubuntu/watch-together/rust/crates/server)
+    Checking wt-cli v0.1.0 (/home/ubuntu/watch-together/rust/crates/cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 29.00s
+[0m
+[0m$ [0mcargo test
+Compiling wt-protocol v0.1.0 (/home/ubuntu/watch-together/rust/crates/protocol)
+   Compiling wt-server v0.1.0 (/home/ubuntu/watch-together/rust/crates/server)
+   Compiling wt-cli v0.1.0 (/home/ubuntu/watch-together/rust/crates/cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 26.49s
+     Running unittests src/main.rs (target/debug/deps/wt_play-3bee59d03eb2951c)
+
+running 11 tests
+test args::tests::flags_parse_and_conflicts_are_refused ... ok
+test clock::tests::burst_takes_the_median_and_ignores_outliers ... ok
+test clock::tests::four_timestamp_sample ... ok
+test drift::tests::policy_table_at_the_boundaries ... ok
+test net::tests::https_urls_map_to_wss_urls ... ok
+test net::tests::server_urls_map_to_ws_urls ... ok
+test player::tests::sim_models_load_seek_pause_and_speed ... ok
+test session::tests::anchor_math ... ok
+test wire::tests::every_outbound_message_validates_against_the_schema ... ok
+test wire::tests::inbound_parsing_keeps_what_the_client_needs ... ok
+test media::tests::refs_match_the_grammar_and_cover_head_and_tail ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.59s
+
+     Running tests/sim.rs (target/debug/deps/sim-38c17a6d8fdca093)
+
+running 4 tests
+test live_tls_roundtrip ... ignored, needs the network and the deployed server
+test refused_token_exits_with_an_error ... ok
+test create_prints_a_joinable_room ... ok
+test two_simulated_clients_converge_after_play_and_seek ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 6.11s
+
+
+running 11 tests
+test item_ref::tests::rejects_everything_the_pattern_rejects ... ok
+test message::tests::encode_wraps_the_body_in_a_server_envelope ... ok
+test item_ref::tests::parses_every_scheme ... ok
+test message::tests::envelope_errors_are_ignorable ... ok
+test message::tests::hello_and_report_validation ... ok
+test message::tests::integers_follow_number_is_safe_integer ... ok
+test message::tests::host_intents_parse_and_validate_arguments ... ok
+test message::tests::intent_args_are_validated_like_the_reference ... ok
+test types::tests::integral_rate_serializes_as_an_integer ... ok
+test types::tests::position_at_follows_the_anchor ... ok
+test types::tests::position_at_rounds_like_js_math_round ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/wt_protocol-8c2225486e359376)
+     Running unittests src/lib.rs (target/debug/deps/wt_server-4d3b6af4fc69dca3)
+     Running unittests src/main.rs (target/debug/deps/wt_server-46ff8f728966d6d3)
+
+running 1 test
+test tokens::tests::rejects_non_canonical_signature_encodings ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/persistence.rs (target/debug/deps/persistence-ee7b6a3e005c6373)
+
+running 8 tests
+test failed_database_open_keeps_room_serving_degraded ... ok
+test expiry_on_boot_and_sweep_closes_sockets ... ok
+test invalid_json_room_is_skipped_and_other_rooms_load ... ok
+test migrations_are_idempotent ... ok
+test restart_restores_playback_queue_revision_and_metadata ... ok
+test room_cap_and_per_ip_token_bucket ... ok
+test write_failure_marks_room_degraded_without_rejecting_intents ... ok
+test member_and_queue_caps_refuse_only_new_entries ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.75s
+
+
+running 21 tests
+     Running tests/room.rs (target/debug/deps/room-bd8736694ae855ab)
+test ac1_post_rooms_returns_room_id_and_join_token ... ok
+test ac10_report_is_stored_per_client_and_never_broadcast ... ok
+test ac3_hello_welcome_and_presence_join ... ok
+test ac4_clock_offset_over_10_pings_is_within_50ms ... ok
+test ac5_play_reaches_other_client_as_state_within_500ms ... ok
+test ac2_bad_tokens_are_closed_with_4001_and_never_join ... ok
+test ac7_seek_sets_position_and_preserves_item_rate_paused ... ok
+test ac8_rev_and_seq_increase_monotonically_across_five_intents ... ok
+test ac6_pause_freezes_position_at_elapsed_time ... ok
+test harness_schema_validator_accepts_valid_and_rejects_off_schema_messages ... ok
+test ac9_reconnecting_client_gets_welcome_matching_latest_state ... ok
+test http_health_is_ok_and_everything_else_is_404 ... ok
+test host_controls_permissions_and_meta_are_broadcast ... ok
+test kick_closes_every_target_connection_and_removes_presence ... ok
+test presence_is_keyed_by_user_across_connections ... ok
+test queue_add_remove_and_skip ... ok
+test refused_intents_get_a_reject_to_the_sender_only ... ok
+test rooms_are_isolated ... ok
+test malformed_input_is_ignored_without_disconnecting ... ok
+test seq_counts_every_broadcast_while_rev_counts_only_content ... ok
+test valid_token_for_unknown_room_closes_with_4004 ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+
+   Doc-tests wt_protocol
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests wt_server
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[0m
+[0m$ [0mgit diff --check
+(no output)
+[0m
+[0m$ [0mgit status --short
+M app/lib/protocol.dart
+ M app/lib/room_client.dart
+ M app/test/live_room_test.dart
+ M app/test/protocol_test.dart
+ M protocol/room.schema.json
+ M rust/crates/cli/src/main.rs
+ M rust/crates/cli/src/net.rs
+ M rust/crates/cli/tests/sim.rs
+ M rust/crates/protocol/src/lib.rs
+ M rust/crates/protocol/src/message.rs
+ M rust/crates/server/src/lib.rs
+ M rust/crates/server/src/room.rs
+ M rust/crates/server/src/ws.rs
+ M rust/crates/server/tests/persistence.rs
+ M rust/crates/server/tests/room.rs
+ M rust/crates/server/tests/support/mod.rs
+?? oc_task7.log
+[0m
+[0m→ [0mRead rust/crates/server/tests/room.rs[90m [offset=800, limit=72][0m
+[0m→ [0mRead rust/crates/server/src/room.rs[90m [offset=200, limit=65][0m
+[0m→ [0mRead app/lib/join_screen.dart[90m [limit=215][0m
+[0m→ [0mRead app/lib/room_screen.dart[90m [limit=95][0m
+[0m% [0mPatch 2 files
+[0m% [0mPatch 1 file
+[0m% [0mPatch 1 file
+[0m
+[0m$ [0mnix shell nixpkgs#flutter -c bash -c "cd app && flutter analyze && flutter test"
+Analyzing app...                                                
+No issues found! (ran in 24.0s)
+00:00 +0: loading /home/ubuntu/watch-together/app/test/clock_test.dart
+00:00 +0: /home/ubuntu/watch-together/app/test/clock_test.dart: four-timestamp sample
+00:00 +1: /home/ubuntu/watch-together/app/test/clock_test.dart: median
+00:00 +2: /home/ubuntu/watch-together/app/test/clock_test.dart: a burst of synthetic samples gives the median offset and rtt
+00:00 +3: /home/ubuntu/watch-together/app/test/clock_test.dart: outliers do not move the estimate
+00:00 +4: /home/ubuntu/watch-together/app/test/clock_test.dart: a refresh drops the partial burst and keeps the last estimate
+00:00 +5: loading /home/ubuntu/watch-together/app/test/protocol_test.dart
+00:00 +5: /home/ubuntu/watch-together/app/test/protocol_test.dart: envelope every message type roundtrips through encode/decode
+00:00 +6: /home/ubuntu/watch-together/app/test/protocol_test.dart: envelope encodes the schema envelope with id only when present
+00:00 +7: /home/ubuntu/watch-together/app/test/protocol_test.dart: envelope decodes a server state and its anchor
+00:00 +8: /home/ubuntu/watch-together/app/test/protocol_test.dart: envelope meta is optional for old welcomes and validated when present
+00:00 +9: /home/ubuntu/watch-together/app/test/protocol_test.dart: envelope host intents are recognized
+00:00 +10: /home/ubuntu/watch-together/app/test/protocol_test.dart: ignored input unknown type is ignored
+00:00 +11: /home/ubuntu/watch-together/app/test/protocol_test.dart: ignored input invalid messages are ignored, never thrown
+00:01 +12: /home/ubuntu/watch-together/app/test/protocol_test.dart: ignored input integral floats count as integers, like JSON Schema
+00:01 +13: /home/ubuntu/watch-together/app/test/protocol_test.dart: item_ref grammar accepts the four prefixes
+00:01 +14: /home/ubuntu/watch-together/app/test/protocol_test.dart: item_ref grammar rejects everything else
+00:01 +15: /home/ubuntu/watch-together/app/test/protocol_test.dart: endpoints ws and rooms URLs keep host, port and path
+00:01 +16: loading /home/ubuntu/watch-together/app/test/widget_test.dart
+00:02 +16: /home/ubuntu/watch-together/app/test/widget_test.dart: JoinScreen rejects an empty room
+00:04 +17: /home/ubuntu/watch-together/app/test/widget_test.dart: JoinScreen rejects a bad URL
+00:04 +18: /home/ubuntu/watch-together/app/test/widget_test.dart: validateServerUrl accepts http and https only
+00:04 +19: loading /home/ubuntu/watch-together/app/test/live_room_test.dart
+00:05 +19: /home/ubuntu/watch-together/app/test/live_room_test.dart: live: create a room, join it, play, and receive state
+  Skip: set WT_LIVE=1 to run against a live server
+00:05 +19 ~1: loading /home/ubuntu/watch-together/app/test/player_test.dart
+00:06 +19 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: positionAt playing advances with server time
+00:06 +20 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: positionAt paused holds the anchor position whatever the time
+00:06 +21 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: positionAt rate scales elapsed time
+00:06 +22 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: positionAt negative elapsed extrapolates backwards, never before 0
+00:06 +23 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: positionAt rounds like JS Math.round
+00:06 +24 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: item_ref of a local file small file: size + the whole-file hash twice
+00:06 +25 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: item_ref of a local file empty file matches the Rust client
+00:06 +26 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: item_ref of a local file large file: first and last 4 MiB, each byte range seen
+00:07 +27 ~1: /home/ubuntu/watch-together/app/test/player_test.dart: drift policy bands
+00:07 +28 ~1: All tests passed!
+[0m
+[0m$ [0mgit diff --check
+(no output)
+[0m
+[0m# [0mTodos
+[✓] Read task, architecture, schema, and Rust/Flutter implementation to identify required changes
+[✓] Implement schema, Rust permissions/host controls/snapshot meta, and Flutter protocol updates with tests
+[✓] Run Rust and Flutter checks and report permission matrix, files, test counts
+[0m
+Implemented TASK7 room permissions, host controls, and snapshot meta across the JSON schema, Rust protocol and server, and Flutter protocol layer. `POST /rooms` now returns a `host_id` when it generates one; the CLI and Flutter room-creation flows use that identity when joining.
+
+| Intent | `controls=host` | `controls=all` |
+|---|---|---|
+| `play`, `pause`, `seek`, `skip` | Host | Anyone |
+| `queue_add`, `queue_remove` | Anyone | Anyone |
+| `set_controls`, `lock`, `kick` | Host | Host |
+
+A locked room refuses new valid-token joins with **4003**; bad tokens still receive **4001**. Existing guests receive `locked` for intents other than `lock`, while the host can still control the room. A kick closes the target’s connections with **4005** and removes presence; kicking oneself is rejected.
+
+**Files:** 18 changed, spanning `protocol/room.schema.json`, Rust protocol/server/CLI code and tests, and Flutter app/protocol code and tests.
+
+**Checks:** Rust `cargo test` passed **55 tests** (1 ignored); `cargo clippy --all-targets -- -D warnings` and `cargo fmt --check` passed using the Nix-provided components. Flutter analyze passed, and Flutter test passed **28 tests** (1 live test skipped).

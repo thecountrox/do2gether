@@ -66,6 +66,16 @@
         "caps": { "type": "array", "items": { "type": "string" } }
       }
     },
+    "meta": {
+      "type": "object",
+      "required": ["host_id", "host_name", "controls", "locked"],
+      "properties": {
+        "host_id": { "type": "string" },
+        "host_name": { "type": "string" },
+        "controls": { "enum": ["host", "all"] },
+        "locked": { "type": "boolean" }
+      }
+    },
     "hello": {
       "type": "object",
       "required": ["proto", "client"],
@@ -94,7 +104,8 @@
             "rev": { "type": "integer", "minimum": 0 },
             "playback": { "anyOf": [{ "$ref": "#/$defs/playback" }, { "type": "null" }] },
             "queue": { "type": "array", "items": { "$ref": "#/$defs/queue_item" } },
-            "presence": { "type": "array", "items": { "$ref": "#/$defs/member" } }
+            "presence": { "type": "array", "items": { "$ref": "#/$defs/member" } },
+            "meta": { "$ref": "#/$defs/meta" }
           }
         },
         "server_now": { "type": "integer" }
@@ -122,7 +133,7 @@
       "type": "object",
       "required": ["op", "args"],
       "properties": {
-        "op": { "enum": ["play", "pause", "seek", "queue_add", "queue_remove", "skip"] },
+        "op": { "enum": ["play", "pause", "seek", "queue_add", "queue_remove", "skip", "set_controls", "lock", "kick"] },
         "args": { "type": "object" }
       }
     },
@@ -132,7 +143,8 @@
       "properties": {
         "rev": { "type": "integer", "minimum": 0 },
         "playback": { "anyOf": [{ "$ref": "#/$defs/playback" }, { "type": "null" }] },
-        "queue": { "type": "array", "items": { "$ref": "#/$defs/queue_item" } }
+        "queue": { "type": "array", "items": { "$ref": "#/$defs/queue_item" } },
+        "meta": { "$ref": "#/$defs/meta" }
       }
     },
     "report": {

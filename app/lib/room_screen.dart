@@ -20,12 +20,14 @@ class RoomScreen extends StatefulWidget {
     required this.room,
     required this.token,
     required this.name,
+    this.clientId,
   });
 
   final Uri server;
   final String room;
   final String token;
   final String name;
+  final String? clientId;
 
   @override
   State<RoomScreen> createState() => _RoomScreenState();
@@ -52,6 +54,7 @@ class _RoomScreenState extends State<RoomScreen> {
       room: widget.room,
       token: widget.token,
       name: widget.name,
+      clientId: widget.clientId,
       onMessage: _onMessage,
       onChange: _onClientChange,
     )..connect();

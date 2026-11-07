@@ -84,6 +84,15 @@ pub enum Intent {
         item_ref: String,
     },
     Skip,
+    SetControls {
+        controls: String,
+    },
+    Lock {
+        locked: bool,
+    },
+    Kick {
+        user_id: String,
+    },
 }
 
 /// Why an intent is refused. The `Display` text is the `reject.message`.
@@ -101,6 +110,14 @@ pub enum IntentError {
     NotInQueue,
     #[error("queue is empty and nothing is playing")]
     NothingToSkip,
+    #[error("controls must be host or all")]
+    InvalidControls,
+    #[error("locked must be a boolean")]
+    InvalidLocked,
+    #[error("user_id must be a non-empty string")]
+    InvalidUserId,
+    #[error("host cannot kick self")]
+    CannotKickSelf,
 }
 
 impl ClientMsg {
@@ -166,6 +183,20 @@ impl Intent {
                 _ => Err(IntentError::NotInQueue),
             }),
             "skip" => args().map(|_| Intent::Skip),
+            "set_controls" => args().and_then(|a| match a.get("controls") {
+                Some(Value::String(s)) if s == "host" || s == "all" => Ok(Intent::SetControls {
+                    controls: s.clone(),
+                }),
+                _ => Err(IntentError::InvalidControls),
+            }),
+            "lock" => args().and_then(|a| match a.get("locked") {
+                Some(Value::Bool(locked)) => Ok(Intent::Lock { locked: *locked }),
+                _ => Err(IntentError::InvalidLocked),
+            }),
+            "kick" => args().and_then(|a| match a.get("user_id") {
+                Some(Value::String(s)) if !s.is_empty() => Ok(Intent::Kick { user_id: s.clone() }),
+                _ => Err(IntentError::InvalidUserId),
+            }),
             _ => return None,
         };
         Some(parsed)
@@ -269,6 +300,15 @@ pub struct Snapshot<'a> {
     pub playback: Option<&'a Playback>,
     pub queue: &'a [QueueItem],
     pub presence: Vec<&'a Member>,
+    pub meta: Meta<'a>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Meta<'a> {
+    pub host_id: &'a str,
+    pub host_name: &'a str,
+    pub controls: &'a str,
+    pub locked: bool,
 }
 
 /// A server message body; [`encode`] wraps it in the envelope.
@@ -289,6 +329,7 @@ pub enum ServerMsg<'a> {
         rev: u64,
         playback: Option<&'a Playback>,
         queue: &'a [QueueItem],
+        meta: Meta<'a>,
     },
     Presence {
         user_id: &'a str,
@@ -508,5 +549,49 @@ mod tests {
             json!({ "v": 1, "t": "reject", "room": "r1", "seq": 3, "ts": 10, "from": "server",
                     "code": "intent_rejected", "message": "nothing is playing" })
         );
+    }
+
+    #[test]
+    fn host_intents_parse_and_validate_arguments() {
+        for (op, args, expected) in [
+            (
+                "set_controls",
+                json!({"controls":"all"}),
+                Intent::SetControls {
+                    controls: "all".into(),
+                },
+            ),
+            (
+                "lock",
+                json!({"locked":true}),
+                Intent::Lock { locked: true },
+            ),
+            (
+                "kick",
+                json!({"user_id":"guest"}),
+                Intent::Kick {
+                    user_id: "guest".into(),
+                },
+            ),
+        ] {
+            assert_eq!(
+                intent(op, args),
+                Ok(ClientMsg::Intent {
+                    id: None,
+                    intent: Ok(expected)
+                })
+            );
+        }
+        for (op, args, error) in [
+            (
+                "set_controls",
+                json!({"controls":"everyone"}),
+                IntentError::InvalidControls,
+            ),
+            ("lock", json!({"locked":1}), IntentError::InvalidLocked),
+            ("kick", json!({"user_id":""}), IntentError::InvalidUserId),
+        ] {
+            assert_eq!(intent(op, args), refused(error));
+        }
     }
 }

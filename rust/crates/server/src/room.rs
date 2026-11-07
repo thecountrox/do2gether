@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc::UnboundedSender;
 use wt_protocol::{
-    ClientInfo, ClientMsg, INTENT_REJECTED, Intent, IntentError, Member, Observed, Playback,
+    ClientInfo, ClientMsg, INTENT_REJECTED, Intent, IntentError, Member, Meta, Observed, Playback,
     PresenceAction, QueueItem, ServerMsg, Snapshot, encode,
 };
 
@@ -35,6 +35,7 @@ pub enum Outgoing {
     Text(String),
     Expired,
     Full,
+    Kicked,
 }
 
 /// One user, however many connections they have open.
@@ -58,7 +59,7 @@ pub struct Room {
     pub(crate) store: Option<Arc<Store>>,
     pub(crate) ttl_ms: i64,
     pub(crate) max_members: usize,
-    /// Content revision: bumped only when playback or queue changes.
+    /// Room state revision: bumped when playback, queue or meta changes.
     pub rev: u64,
     /// Envelope sequence: bumped on every broadcast, presence included.
     pub seq: u64,
@@ -208,12 +209,42 @@ impl Room {
                 self.send(conn, &pong);
             }
             ClientMsg::Intent { id, intent } => {
+                let actor = client.user_id.clone().expect("hello completed");
+                let host = self.host_id.as_deref() == Some(actor.as_str());
+                if self.locked && !host && !matches!(&intent, Ok(Intent::Lock { .. })) {
+                    self.reject_code(conn, id.as_deref(), "locked", "room locked");
+                    return;
+                }
+                if let Ok(op) = &intent {
+                    let restricted = matches!(
+                        op,
+                        Intent::SetControls { .. } | Intent::Lock { .. } | Intent::Kick { .. }
+                    ) || (self.controls == "host"
+                        && matches!(
+                            op,
+                            Intent::Play { .. }
+                                | Intent::Pause
+                                | Intent::Seek { .. }
+                                | Intent::Skip
+                        ));
+                    if restricted && !host {
+                        self.reject_code(conn, id.as_deref(), "not_host", "host only");
+                        return;
+                    }
+                }
                 if matches!(&intent, Ok(Intent::QueueAdd { .. })) && self.queue.len() >= 200 {
                     self.reject_limit(conn, id.as_deref());
                     return;
                 }
-                match intent.and_then(|i| self.apply(i, server_now())) {
-                    Ok(()) => self.broadcast_state(),
+                match intent.and_then(|i| {
+                    if let Intent::Kick { user_id } = i {
+                        self.kick(&actor, &user_id)
+                    } else {
+                        self.apply(i, server_now()).map(|()| true)
+                    }
+                }) {
+                    Ok(true) => self.broadcast_state(),
+                    Ok(false) => {}
                     Err(e) => self.reject(conn, id.as_deref(), e),
                 }
             }
@@ -284,6 +315,7 @@ impl Room {
                 playback: self.playback.as_ref(),
                 queue: &self.queue,
                 presence: self.presence.iter().map(|p| &p.member).collect(),
+                meta: self.meta(),
             },
             server_now: server_now(),
         };
@@ -353,16 +385,53 @@ impl Room {
                     paused: false,
                 });
             }
+            Intent::SetControls { controls } => self.controls = controls,
+            Intent::Lock { locked } => self.locked = locked,
+            Intent::Kick { .. } => unreachable!("kick handled separately"),
         }
         Ok(())
     }
 
+    fn kick(&mut self, actor: &str, user_id: &str) -> Result<bool, IntentError> {
+        if actor == user_id {
+            return Err(IntentError::CannotKickSelf);
+        }
+        let targets: Vec<_> = self
+            .clients
+            .iter()
+            .filter(|(_, c)| c.user_id.as_deref() == Some(user_id))
+            .map(|(id, _)| *id)
+            .collect();
+        if targets.is_empty() {
+            return Err(IntentError::InvalidUserId);
+        }
+        for id in targets {
+            if let Some(client) = self.clients.get(&id) {
+                let _ = client.tx.send(Outgoing::Kicked);
+            }
+            self.detach(id);
+        }
+        Ok(false)
+    }
+
+    fn meta(&self) -> Meta<'_> {
+        Meta {
+            host_id: self.host_id.as_deref().unwrap_or(""),
+            host_name: self.host_name.as_deref().unwrap_or(""),
+            controls: &self.controls,
+            locked: self.locked,
+        }
+    }
+
     fn reject(&self, conn: ConnId, req_id: Option<&str>, e: IntentError) {
         eprintln!("[room {}] rejected intent: {e}", self.id);
-        let message = e.to_string();
+        self.reject_code(conn, req_id, INTENT_REJECTED, &e.to_string());
+    }
+
+    fn reject_code(&self, conn: ConnId, req_id: Option<&str>, code: &str, message: &str) {
         let reject = ServerMsg::Reject {
-            code: INTENT_REJECTED,
-            message: &message,
+            code,
+            message,
             req_id,
         };
         self.send(conn, &reject);
@@ -385,6 +454,7 @@ impl Room {
             rev: self.rev,
             playback: self.playback.as_ref(),
             queue: &self.queue,
+            meta: self.meta(),
         };
         self.fan_out(&self.encode(&state), None);
     }

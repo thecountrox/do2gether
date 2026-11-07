@@ -23,6 +23,7 @@ void main() {
       final body = jsonDecode(await utf8.decoder.bind(response).join()) as Map<String, Object?>;
       final room = body['room_id']! as String;
       final token = body['join_token']! as String;
+      final hostId = body['host_id']! as String;
 
       final welcome = Completer<WelcomeMsg>();
       final state = Completer<StateMsg>();
@@ -31,6 +32,7 @@ void main() {
         room: room,
         token: token,
         name: 'flutter-live-test',
+        clientId: hostId,
         onMessage: (m) {
           final b = m.body;
           if (b is WelcomeMsg && !welcome.isCompleted) welcome.complete(b);
@@ -41,6 +43,7 @@ void main() {
       client.connect();
 
       final w = await welcome.future.timeout(const Duration(seconds: 15));
+      expect(w.snapshot.meta?.hostId, hostId);
       expect(w.snapshot.rev, greaterThanOrEqualTo(0));
       expect(client.status, ConnectionStatus.joined);
 

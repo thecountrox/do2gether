@@ -253,6 +253,7 @@ fn validate(schema: &Value, v: &Value, path: &str, errs: &mut Vec<String>) {
 pub struct RoomInfo {
     pub room_id: String,
     pub join_token: String,
+    pub host_id: String,
 }
 
 /// One server per test. On drop (unless the test already failed) asserts that every message the
@@ -360,7 +361,15 @@ impl Server {
     }
 
     pub async fn create_room(&self) -> RoomInfo {
-        let (status, _, body) = self.http(Method::POST, "/rooms").await;
+        let (status, _, body) = self
+            .http_body(
+                Method::POST,
+                "/rooms",
+                json!({"host_id":"alice", "host_name":"alice"})
+                    .to_string()
+                    .into(),
+            )
+            .await;
         assert_eq!(status, StatusCode::CREATED);
         serde_json::from_slice(&body).unwrap()
     }

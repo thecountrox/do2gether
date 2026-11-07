@@ -31,21 +31,31 @@ async fn restart_restores_playback_queue_revision_and_metadata() {
         .await;
     assert_eq!(status, StatusCode::CREATED);
     let info: RoomInfo = serde_json::from_slice(&body).unwrap();
-    let (mut client, _) = server.join("alice", &info).await;
+    let (mut client, _) = server.join("h1", &info).await;
     client
         .intent("play", json!({"item_ref": FILM, "position_ms": 1234}))
         .await;
     let played = client.next("state").await;
     client.intent("queue_add", json!({"item_ref": SONG})).await;
     let queued = client.next("state").await;
+    client
+        .intent("set_controls", json!({"controls":"all"}))
+        .await;
+    client.next("state").await;
+    client.intent("lock", json!({"locked":true})).await;
+    let locked = client.next("state").await;
+    assert_eq!(
+        locked["meta"],
+        json!({"host_id":"h1","host_name":"Host","controls":"all","locked":true})
+    );
     client.close().await;
     server.wait_for_clients(&info.room_id, 0).await;
     drop(server);
     let reopened = open(&path, Limits::default());
     let room = reopened.room(&info.room_id).unwrap();
     let r = room.lock().unwrap();
-    assert_eq!(r.rev, 2);
-    assert_eq!(r.seq, 4); // join, two intents, leave
+    assert_eq!(r.rev, 4);
+    assert_eq!(r.seq, 6); // join, four intents, leave
     assert_eq!(
         serde_json::to_value(&r.playback).unwrap(),
         played["playback"]
@@ -53,6 +63,8 @@ async fn restart_restores_playback_queue_revision_and_metadata() {
     assert_eq!(serde_json::to_value(&r.queue).unwrap(), queued["queue"]);
     assert_eq!(r.host_id.as_deref(), Some("h1"));
     assert_eq!(r.host_name.as_deref(), Some("Host"));
+    assert_eq!(r.controls, "all");
+    assert!(r.locked);
     assert_eq!(r.guild_id.as_deref(), Some("g1"));
     assert_eq!(r.voice_channel_id.as_deref(), Some("v1"));
     assert_eq!(r.member_count(), 0);

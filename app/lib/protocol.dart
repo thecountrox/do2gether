@@ -282,12 +282,41 @@ class Snapshot {
     required this.playback,
     required this.queue,
     required this.presence,
+    this.meta,
   });
 
   final int rev;
   final Playback? playback;
   final List<QueueItem> queue;
   final List<Member> presence;
+  final RoomMeta? meta;
+}
+
+class RoomMeta {
+  const RoomMeta({required this.hostId, required this.hostName, required this.controls, required this.locked});
+
+  final String hostId;
+  final String hostName;
+  final String controls;
+  final bool locked;
+
+  Map<String, Object?> toJson() => {
+    'host_id': hostId,
+    'host_name': hostName,
+    'controls': controls,
+    'locked': locked,
+  };
+
+  static RoomMeta? parse(Object? value) {
+    final m = _map(value);
+    if (m == null) return null;
+    final hostId = _str(m['host_id']);
+    final hostName = _str(m['host_name']);
+    final controls = m['controls'];
+    final locked = m['locked'];
+    if (hostId == null || hostName == null || (controls != 'host' && controls != 'all') || locked is! bool) return null;
+    return RoomMeta(hostId: hostId, hostName: hostName, controls: controls as String, locked: locked);
+  }
 }
 
 class WelcomeMsg extends Body {
@@ -306,6 +335,7 @@ class WelcomeMsg extends Body {
       'playback': snapshot.playback?.toJson(),
       'queue': [for (final q in snapshot.queue) q.toJson()],
       'presence': [for (final p in snapshot.presence) p.toJson()],
+      if (snapshot.meta != null) 'meta': snapshot.meta!.toJson(),
     },
     'server_now': serverNow,
   };
@@ -318,9 +348,10 @@ class WelcomeMsg extends Body {
     final (playback, okPlayback) = _nullablePlayback(s);
     final queue = _list(s['queue'], QueueItem._parse);
     final presence = _list(s['presence'], Member._parse);
-    if (rev == null || rev < 0 || !okPlayback || queue == null || presence == null) return null;
+    final meta = s.containsKey('meta') ? RoomMeta.parse(s['meta']) : null;
+    if (rev == null || rev < 0 || !okPlayback || queue == null || presence == null || (s.containsKey('meta') && meta == null)) return null;
     return WelcomeMsg(
-      snapshot: Snapshot(rev: rev, playback: playback, queue: queue, presence: presence),
+      snapshot: Snapshot(rev: rev, playback: playback, queue: queue, presence: presence, meta: meta),
       serverNow: serverNow,
     );
   }
@@ -374,7 +405,7 @@ class ClockPongMsg extends Body {
   }
 }
 
-const List<String> intentOps = ['play', 'pause', 'seek', 'queue_add', 'queue_remove', 'skip'];
+const List<String> intentOps = ['play', 'pause', 'seek', 'queue_add', 'queue_remove', 'skip', 'set_controls', 'lock', 'kick'];
 
 class IntentMsg extends Body {
   const IntentMsg({required this.op, this.args = const {}});
@@ -397,11 +428,12 @@ class IntentMsg extends Body {
 }
 
 class StateMsg extends Body {
-  const StateMsg({required this.rev, required this.playback, required this.queue});
+  const StateMsg({required this.rev, required this.playback, required this.queue, this.meta});
 
   final int rev;
   final Playback? playback;
   final List<QueueItem> queue;
+  final RoomMeta? meta;
 
   @override
   String get type => 'state';
@@ -411,14 +443,16 @@ class StateMsg extends Body {
     'rev': rev,
     'playback': playback?.toJson(),
     'queue': [for (final q in queue) q.toJson()],
+    if (meta != null) 'meta': meta!.toJson(),
   };
 
   static StateMsg? _parse(Map<String, Object?> m) {
     final rev = _int(m['rev']);
     final (playback, okPlayback) = _nullablePlayback(m);
     final queue = _list(m['queue'], QueueItem._parse);
-    if (rev == null || rev < 0 || !okPlayback || queue == null) return null;
-    return StateMsg(rev: rev, playback: playback, queue: queue);
+    final meta = m.containsKey('meta') ? RoomMeta.parse(m['meta']) : null;
+    if (rev == null || rev < 0 || !okPlayback || queue == null || (m.containsKey('meta') && meta == null)) return null;
+    return StateMsg(rev: rev, playback: playback, queue: queue, meta: meta);
   }
 }
 

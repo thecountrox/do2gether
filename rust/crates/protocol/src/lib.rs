@@ -8,7 +8,7 @@ mod types;
 
 pub use item_ref::{ITEM_REF_PATTERN, ItemRef, is_item_ref};
 pub use message::{
-    ClientInfo, ClientMsg, INTENT_REJECTED, Intent, IntentError, ParseError, PresenceAction,
+    ClientInfo, ClientMsg, INTENT_REJECTED, Intent, IntentError, Meta, ParseError, PresenceAction,
     ServerMsg, Snapshot, as_safe_integer, encode,
 };
 pub use types::{MAX_SAFE_INTEGER, Member, Observed, Playback, QueueItem};

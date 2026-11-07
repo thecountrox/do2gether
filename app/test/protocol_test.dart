@@ -25,13 +25,14 @@ void main() {
             playback: pb,
             queue: [QueueItem(itemRef: 'yt:dQw4w9WgXcQ', title: 't', durationMs: 5, addedBy: 'a')],
             presence: [Member(userId: 'a', name: 'ann', caps: ['player:mpv'])],
+            meta: RoomMeta(hostId: 'a', hostName: 'ann', controls: 'host', locked: false),
           ),
           serverNow: 1762500000123,
         ),
         const ClockPingMsg(pingId: 'p0', t0: 1),
         const ClockPongMsg(pingId: 'p0', t0: 1, t1: 2, t2: 3),
         const IntentMsg(op: 'seek', args: {'position_ms': 52000}),
-        const StateMsg(rev: 4, playback: null, queue: []),
+        const StateMsg(rev: 4, playback: null, queue: [], meta: RoomMeta(hostId: 'a', hostName: 'ann', controls: 'all', locked: true)),
         const ReportMsg(
           activityId: null,
           observed: Observed(offsetMs: 0.5, rttMs: 12, driftMs: -3, source: 'flutter'),
@@ -81,6 +82,23 @@ void main() {
       expect(body.rev, 2);
       expect(body.playback!.rate, 1.0);
       expect(positionAt(body.playback!, 1010), 43000);
+    });
+
+    test('meta is optional for old welcomes and validated when present', () {
+      const old = WelcomeMsg(snapshot: Snapshot(rev: 0, playback: null, queue: [], presence: []), serverNow: 1);
+      expect((decodeMessage(encodeMessage(env, old))!.body as WelcomeMsg).snapshot.meta, isNull);
+      final json = jsonDecode(encodeMessage(env, old)) as Map<String, dynamic>;
+      (json['snapshot'] as Map<String, dynamic>)['meta'] = {'host_id': 'a', 'host_name': 'Ann', 'controls': 'all', 'locked': true};
+      final meta = (decodeMessage(jsonEncode(json))!.body as WelcomeMsg).snapshot.meta!;
+      expect([meta.hostId, meta.hostName, meta.controls, meta.locked], ['a', 'Ann', 'all', true]);
+      (json['snapshot'] as Map<String, dynamic>)['meta']['controls'] = 'everyone';
+      expect(decodeMessage(jsonEncode(json)), isNull);
+    });
+
+    test('host intents are recognized', () {
+      for (final (op, args) in [('set_controls', {'controls': 'all'}), ('lock', {'locked': true}), ('kick', {'user_id': 'b'})]) {
+        expect((decodeMessage(encodeMessage(env, IntentMsg(op: op, args: args)))!.body as IntentMsg).op, op);
+      }
     });
   });
 

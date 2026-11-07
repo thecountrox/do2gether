@@ -146,7 +146,7 @@ impl AppState {
         true
     }
 
-    fn create_room(&self, info: CreateRoom) -> Option<String> {
+    fn create_room(&self, info: CreateRoom) -> Option<(String, String)> {
         let mut rooms = self.rooms.write().unwrap_or_else(PoisonError::into_inner);
         if rooms.len() >= self.limits.max_rooms {
             return None;
@@ -163,8 +163,9 @@ impl AppState {
             }
         };
         let mut room = Room::new(id.clone());
-        room.host_id = info.host_id;
-        room.host_name = info.host_name;
+        let host_id = info.host_id.unwrap_or_else(new_room_id);
+        room.host_id = Some(host_id.clone());
+        room.host_name = Some(info.host_name.unwrap_or_default());
         room.guild_id = info.guild_id;
         room.voice_channel_id = info.voice_channel_id;
         room.ttl_ms = self.limits.ttl_ms;
@@ -174,7 +175,7 @@ impl AppState {
         room.degraded = self.db_unavailable;
         room.persist();
         rooms.insert(id.clone(), Arc::new(Mutex::new(room)));
-        Some(id)
+        Some((id, host_id))
     }
 }
 
@@ -213,6 +214,7 @@ struct CreateRoom {
 struct Created {
     room_id: String,
     join_token: String,
+    host_id: String,
 }
 
 async fn create_room(
@@ -239,7 +241,7 @@ async fn create_room(
             Json(json!({ "error": "rate_limited" })),
         );
     }
-    let Some(room_id) = state.create_room(info) else {
+    let Some((room_id, host_id)) = state.create_room(info) else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({ "error": "room_limit" })),
@@ -251,6 +253,7 @@ async fn create_room(
         Json(json!(Created {
             room_id,
             join_token,
+            host_id,
         })),
     )
 }
