@@ -4,7 +4,7 @@ Implement `server/` exactly as below. No client code, no extension, no UI.
 
 ## Files
 
-- `server/package.json` — `"type": "module"`, scripts `dev` (tsx watch src/index.ts) and `test` (node --test --experimental-strip-types test/), deps `ws`, dev deps `typescript`, `tsx`, `@types/ws`, `@types/node`.
+- `server/package.json` — `"type": "module"`, scripts `dev` (tsx watch src/index.ts) and `test` (node --test --experimental-strip-types 'test/**/*.test.ts'), deps `ws`, dev deps `typescript`, `tsx`, `@types/ws`, `@types/node`.
 - `server/tsconfig.json` — NodeNext, strict, target ES2023, noEmit for typecheck.
 - `server/src/index.ts` — HTTP + WS bootstrap.
 - `server/src/room.ts` — room state machine.
