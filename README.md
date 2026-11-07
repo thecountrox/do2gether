@@ -4,6 +4,10 @@ Watch, listen and play together. One room, two modes, Discord as the lobby.
 
 **v0 is live:** Rust room server deployed at `https://watch.141.253.97.15.sslip.io`, and `wt-play` — a real mpv client that joins a room, syncs to the room anchor, and reports drift. Measured over the public wss endpoint on one machine: **max 120 ms, p95 119 ms** after play, seek and pause.
 
+**v1 client:** `app/` is a Flutter desktop client — join screen, `Create room`, presence, clock,
+`media_kit` player keyed by the same `item_ref`, drift correction and telemetry. `flutter analyze`,
+26 tests and `flutter build linux --debug` are green; the bundle launches under Xvfb.
+
 ## Layout
 
 ```
