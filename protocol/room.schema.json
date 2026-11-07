@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://watch-together.local/schema/room-v1.json",
+  "title": "watch-together room protocol v1",
+  "type": "object",
+  "required": ["v", "t", "room", "seq", "ts", "from"],
+  "properties": {
+    "v": { "const": 1 },
+    "t": {
+      "enum": [
+        "hello", "welcome", "clock_ping", "clock_pong",
+        "intent", "state", "report", "presence", "event", "reject"
+      ]
+    },
+    "room": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "seq": { "type": "integer", "minimum": 0 },
+    "ts": { "type": "integer", "description": "Sender's server-time estimate, ms since epoch" },
+    "from": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "id": { "type": "string", "maxLength": 64, "description": "Request correlation id" }
+  },
+  "allOf": [
+    { "if": { "properties": { "t": { "const": "hello" } } }, "then": { "$ref": "#/$defs/hello" } },
+    { "if": { "properties": { "t": { "const": "welcome" } } }, "then": { "$ref": "#/$defs/welcome" } },
+    { "if": { "properties": { "t": { "const": "clock_ping" } } }, "then": { "$ref": "#/$defs/clock_ping" } },
+    { "if": { "properties": { "t": { "const": "clock_pong" } } }, "then": { "$ref": "#/$defs/clock_pong" } },
+    { "if": { "properties": { "t": { "const": "intent" } } }, "then": { "$ref": "#/$defs/intent" } },
+    { "if": { "properties": { "t": { "const": "state" } } }, "then": { "$ref": "#/$defs/state" } },
+    { "if": { "properties": { "t": { "const": "report" } } }, "then": { "$ref": "#/$defs/report" } },
+    { "if": { "properties": { "t": { "const": "presence" } } }, "then": { "$ref": "#/$defs/presence" } },
+    { "if": { "properties": { "t": { "const": "event" } } }, "then": { "$ref": "#/$defs/event" } },
+    { "if": { "properties": { "t": { "const": "reject" } } }, "then": { "$ref": "#/$defs/reject" } }
+  ],
+  "$defs": {
+    "item_ref": {
+      "type": "string",
+      "pattern": "^(file:sha256p:[0-9]+:[0-9a-f]{32}:[0-9a-f]{32}|yt:[A-Za-z0-9_-]{11}|ytm:[A-Za-z0-9_-]{11}|subsonic:[a-z0-9-]+/[A-Za-z0-9_-]+)$",
+      "description": "Versioned content reference. The algorithm lives inside the ref."
+    },
+    "playback": {
+      "type": "object",
+      "required": ["item_ref", "anchor_server_ms", "position_ms", "rate", "paused"],
+      "properties": {
+        "item_ref": { "$ref": "#/$defs/item_ref" },
+        "anchor_server_ms": { "type": "integer", "description": "Server time at which position_ms was true" },
+        "position_ms": { "type": "integer", "minimum": 0 },
+        "rate": { "type": "number", "minimum": 0.25, "maximum": 4 },
+        "paused": { "type": "boolean" }
+      }
+    },
+    "queue_item": {
+      "type": "object",
+      "required": ["item_ref"],
+      "properties": {
+        "item_ref": { "$ref": "#/$defs/item_ref" },
+        "title": { "type": "string" },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "added_by": { "type": "string" }
+      }
+    },
+    "member": {
+      "type": "object",
+      "required": ["user_id"],
+      "properties": {
+        "user_id": { "type": "string" },
+        "name": { "type": "string" },
+        "caps": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "hello": {
+      "type": "object",
+      "required": ["proto", "client"],
+      "properties": {
+        "proto": { "const": 1 },
+        "client": {
+          "type": "object",
+          "required": ["id", "name", "ver"],
+          "properties": {
+            "id": { "type": "string" },
+            "name": { "type": "string" },
+            "ver": { "type": "string" }
+          }
+        },
+        "caps": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "welcome": {
+      "type": "object",
+      "required": ["snapshot", "server_now"],
+      "properties": {
+        "snapshot": {
+          "type": "object",
+          "required": ["rev", "playback", "queue", "presence"],
+          "properties": {
+            "rev": { "type": "integer", "minimum": 0 },
+            "playback": { "anyOf": [{ "$ref": "#/$defs/playback" }, { "type": "null" }] },
+            "queue": { "type": "array", "items": { "$ref": "#/$defs/queue_item" } },
+            "presence": { "type": "array", "items": { "$ref": "#/$defs/member" } }
+          }
+        },
+        "server_now": { "type": "integer" }
+      }
+    },
+    "clock_ping": {
+      "type": "object",
+      "required": ["ping_id", "t0"],
+      "properties": {
+        "ping_id": { "type": "string" },
+        "t0": { "type": "integer" }
+      }
+    },
+    "clock_pong": {
+      "type": "object",
+      "required": ["ping_id", "t0", "t1", "t2"],
+      "properties": {
+        "ping_id": { "type": "string" },
+        "t0": { "type": "integer" },
+        "t1": { "type": "integer" },
+        "t2": { "type": "integer" }
+      }
+    },
+    "intent": {
+      "type": "object",
+      "required": ["op", "args"],
+      "properties": {
+        "op": { "enum": ["play", "pause", "seek", "queue_add", "queue_remove", "skip"] },
+        "args": { "type": "object" }
+      }
+    },
+    "state": {
+      "type": "object",
+      "required": ["rev", "playback", "queue"],
+      "properties": {
+        "rev": { "type": "integer", "minimum": 0 },
+        "playback": { "anyOf": [{ "$ref": "#/$defs/playback" }, { "type": "null" }] },
+        "queue": { "type": "array", "items": { "$ref": "#/$defs/queue_item" } }
+      }
+    },
+    "report": {
+      "type": "object",
+      "required": ["observed"],
+      "properties": {
+        "activity_id": { "type": ["string", "null"] },
+        "observed": {
+          "type": "object",
+          "required": ["offset_ms", "rtt_ms", "drift_ms", "source"],
+          "properties": {
+            "offset_ms": { "type": "number" },
+            "rtt_ms": { "type": "number" },
+            "drift_ms": { "type": "number" },
+            "source": { "type": "string" }
+          }
+        }
+      }
+    },
+    "presence": {
+      "type": "object",
+      "required": ["user_id", "action"],
+      "properties": {
+        "user_id": { "type": "string" },
+        "name": { "type": "string" },
+        "action": { "enum": ["join", "leave"] }
+      }
+    },
+    "event": {
+      "type": "object",
+      "required": ["kind", "data"],
+      "properties": {
+        "kind": { "type": "string" },
+        "data": { "type": "object" }
+      }
+    },
+    "reject": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "req_id": { "type": "string" }
+      }
+    }
+  }
+}
