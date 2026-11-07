@@ -81,9 +81,9 @@ Verified live on the deployed server: create with `host_id` → public snapshot 
 ## Known gaps
 
 - Bot-minted join tokens are room-bound but not user-bound: the joining client claims its identity in `hello`.
-- Rooms are in memory: restarting the service drops them.
 - Drift after a seek settles around 100–180 ms, inside the 250 ms video tolerance but not tight enough for music (needs the host-stream model).
-- No Flutter UI yet; `app/` is empty. No Discord bot yet — needs a bot token from the owner.
+- No Discord bot yet — needs a bot token and the choice of separate bot vs Clawn plugin.
+- Android is a debug APK, not a release build (nix SDK lacks AOT `gen_snapshot` on linux-arm64).
 - TypeScript server remains as the reference; it will be deleted once the Rust one has run for a week.
 
 ## Next
