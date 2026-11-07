@@ -10,6 +10,7 @@ use axum::response::{IntoResponse, Response};
 use tokio::sync::mpsc;
 
 use crate::clock::server_now;
+use crate::room::Outgoing;
 use crate::tokens::verify_token;
 use crate::{AppState, SharedRoom, lock};
 
@@ -64,7 +65,18 @@ async fn refuse(mut socket: WebSocket, code: u16, reason: &'static str) {
 
 async fn run(mut socket: WebSocket, room: SharedRoom) {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let conn = lock(&room).attach(tx);
+    let conn = {
+        let mut room = lock(&room);
+        if room.expired {
+            None
+        } else {
+            Some(room.attach(tx))
+        }
+    };
+    let Some(conn) = conn else {
+        refuse(socket, 4006, "room expired").await;
+        return;
+    };
     loop {
         tokio::select! {
             incoming = socket.recv() => {
@@ -88,8 +100,16 @@ async fn run(mut socket: WebSocket, room: SharedRoom) {
                 }
             }
             Some(data) = rx.recv() => {
-                if socket.send(Message::Text(data.into())).await.is_err() {
-                    break;
+                match data {
+                    Outgoing::Text(data) => if socket.send(Message::Text(data.into())).await.is_err() { break; },
+                    Outgoing::Expired => {
+                        let _ = socket.send(Message::Close(Some(CloseFrame { code: 4006, reason: "room expired".into() }))).await;
+                        break;
+                    }
+                    Outgoing::Full => {
+                        let _ = socket.send(Message::Close(Some(CloseFrame { code: 4003, reason: "room full".into() }))).await;
+                        break;
+                    }
                 }
             }
         }

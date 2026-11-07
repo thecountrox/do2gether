@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Display;
+use std::sync::Arc;
 
 use tokio::sync::mpsc::UnboundedSender;
 use wt_protocol::{
@@ -11,6 +12,7 @@ use wt_protocol::{
 };
 
 use crate::clock::server_now;
+use crate::store::Store;
 
 pub type ConnId = u64;
 
@@ -23,10 +25,16 @@ pub struct Report {
 }
 
 struct Client {
-    tx: UnboundedSender<String>,
+    tx: UnboundedSender<Outgoing>,
     /// `None` until a valid `hello`.
     user_id: Option<String>,
     report: Option<Report>,
+}
+
+pub enum Outgoing {
+    Text(String),
+    Expired,
+    Full,
 }
 
 /// One user, however many connections they have open.
@@ -37,6 +45,19 @@ struct Presence {
 
 pub struct Room {
     pub id: String,
+    pub created_ms: i64,
+    pub expires_ms: i64,
+    pub host_id: Option<String>,
+    pub host_name: Option<String>,
+    pub guild_id: Option<String>,
+    pub voice_channel_id: Option<String>,
+    pub controls: String,
+    pub locked: bool,
+    pub degraded: bool,
+    pub expired: bool,
+    pub(crate) store: Option<Arc<Store>>,
+    pub(crate) ttl_ms: i64,
+    pub(crate) max_members: usize,
     /// Content revision: bumped only when playback or queue changes.
     pub rev: u64,
     /// Envelope sequence: bumped on every broadcast, presence included.
@@ -53,6 +74,19 @@ impl Room {
     pub fn new(id: String) -> Self {
         Room {
             id,
+            created_ms: server_now(),
+            expires_ms: 0,
+            host_id: None,
+            host_name: None,
+            guild_id: None,
+            voice_channel_id: None,
+            controls: "host".into(),
+            locked: false,
+            degraded: false,
+            expired: false,
+            store: None,
+            ttl_ms: 24 * 60 * 60 * 1000,
+            max_members: 50,
             rev: 0,
             seq: 0,
             playback: None,
@@ -68,6 +102,40 @@ impl Room {
         self.clients.len()
     }
 
+    pub fn member_count(&self) -> usize {
+        self.presence.len()
+    }
+
+    pub fn expire(&mut self) {
+        self.expired = true;
+        for client in self.clients.values() {
+            let _ = client.tx.send(Outgoing::Expired);
+        }
+    }
+
+    pub(crate) fn persist(&mut self) {
+        if let Some(store) = &self.store
+            && let Err(e) = store.save(self)
+        {
+            eprintln!("[db] room {} write failed: {e}", self.id);
+            self.degraded = true;
+        }
+    }
+
+    fn activity(&mut self) {
+        self.expires_ms = server_now().saturating_add(self.ttl_ms);
+        self.persist();
+    }
+
+    fn persist_member(&mut self, user_id: &str, name: Option<&str>) {
+        if let Some(store) = &self.store
+            && let Err(e) = store.member(self, user_id, name)
+        {
+            eprintln!("[db] room {} member write failed: {e}", self.id);
+            self.degraded = true;
+        }
+    }
+
     /// The latest report from any connection of `user_id`.
     pub fn report_for(&self, user_id: &str) -> Option<&Report> {
         self.clients
@@ -76,7 +144,7 @@ impl Room {
             .find_map(|c| c.report.as_ref())
     }
 
-    pub fn attach(&mut self, tx: UnboundedSender<String>) -> ConnId {
+    pub fn attach(&mut self, tx: UnboundedSender<Outgoing>) -> ConnId {
         let conn = self.next_conn;
         self.next_conn += 1;
         let client = Client {
@@ -89,6 +157,10 @@ impl Room {
     }
 
     pub fn detach(&mut self, conn: ConnId) {
+        if self.expired {
+            self.clients.remove(&conn);
+            return;
+        }
         let Some(user_id) = self.clients.remove(&conn).and_then(|c| c.user_id) else {
             return;
         };
@@ -107,6 +179,9 @@ impl Room {
     }
 
     pub fn handle_message(&mut self, conn: ConnId, raw: &str, received_at: i64) {
+        if self.expired {
+            return;
+        }
         let msg = match ClientMsg::parse(raw) {
             Ok(msg) => msg,
             Err(e) => return self.log(e),
@@ -133,6 +208,10 @@ impl Room {
                 self.send(conn, &pong);
             }
             ClientMsg::Intent { id, intent } => {
+                if matches!(&intent, Ok(Intent::QueueAdd { .. })) && self.queue.len() >= 200 {
+                    self.reject_limit(conn, id.as_deref());
+                    return;
+                }
                 match intent.and_then(|i| self.apply(i, server_now())) {
                     Ok(()) => self.broadcast_state(),
                     Err(e) => self.reject(conn, id.as_deref(), e),
@@ -147,6 +226,14 @@ impl Room {
                     observed,
                     received_ms: received_at,
                 });
+                let user_id = client.user_id.clone().unwrap_or_default();
+                let report = client.report.clone().expect("just set");
+                if let Some(store) = &self.store
+                    && let Err(e) = store.report(self, &user_id, &report)
+                {
+                    eprintln!("[db] room {} report write failed: {e}", self.id);
+                    self.degraded = true;
+                }
             }
         }
     }
@@ -155,6 +242,14 @@ impl Room {
         let ClientInfo {
             id: user_id, name, ..
         } = info;
+        if self.presence.len() >= self.max_members
+            && !self.presence.iter().any(|p| p.member.user_id == user_id)
+        {
+            if let Some(client) = self.clients.get(&conn) {
+                let _ = client.tx.send(Outgoing::Full);
+            }
+            return;
+        }
         if let Some(client) = self.clients.get_mut(&conn) {
             client.user_id = Some(user_id.clone());
         }
@@ -234,7 +329,9 @@ impl Room {
                 pb.position_ms = position_ms;
                 pb.anchor_server_ms = now;
             }
-            Intent::QueueAdd { item_ref } => self.queue.push(QueueItem { item_ref }),
+            Intent::QueueAdd { item_ref } => {
+                self.queue.push(QueueItem { item_ref });
+            }
             Intent::QueueRemove { item_ref } => {
                 let i = self
                     .queue
@@ -271,9 +368,19 @@ impl Room {
         self.send(conn, &reject);
     }
 
+    fn reject_limit(&self, conn: ConnId, req_id: Option<&str>) {
+        let reject = ServerMsg::Reject {
+            code: "limit",
+            message: "queue is full",
+            req_id,
+        };
+        self.send(conn, &reject);
+    }
+
     fn broadcast_state(&mut self) {
         self.rev += 1;
         self.seq += 1;
+        self.activity();
         let state = ServerMsg::State {
             rev: self.rev,
             playback: self.playback.as_ref(),
@@ -289,6 +396,11 @@ impl Room {
         except: Option<ConnId>,
     ) {
         self.seq += 1;
+        self.activity();
+        match action {
+            PresenceAction::Join => self.persist_member(&member.user_id, Some(&member.name)),
+            PresenceAction::Leave => self.persist_member(&member.user_id, None),
+        }
         let presence = ServerMsg::Presence {
             user_id: &member.user_id,
             name: &member.name,
@@ -305,7 +417,7 @@ impl Room {
     fn send(&self, conn: ConnId, msg: &ServerMsg<'_>) {
         if let Some(c) = self.clients.get(&conn) {
             // A closed receiver means the connection is going away; detach follows.
-            let _ = c.tx.send(self.encode(msg));
+            let _ = c.tx.send(Outgoing::Text(self.encode(msg)));
         }
     }
 
@@ -313,7 +425,7 @@ impl Room {
     fn fan_out(&self, data: &str, except: Option<ConnId>) {
         for (conn, c) in &self.clients {
             if c.user_id.is_some() && Some(*conn) != except {
-                let _ = c.tx.send(data.to_owned());
+                let _ = c.tx.send(Outgoing::Text(data.to_owned()));
             }
         }
     }

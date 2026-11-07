@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
-use http_body_util::{BodyExt, Empty};
+use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::header::{CONTENT_TYPE, HOST};
 use hyper::{Method, Request, StatusCode};
@@ -290,11 +290,21 @@ fn encode_component(s: &str) -> String {
 
 impl Server {
     pub async fn start() -> Server {
+        Self::start_with_state(AppState::default()).await
+    }
+
+    pub async fn start_with_state(state: AppState) -> Server {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let state = AppState::default();
         let app = router(state.clone());
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .unwrap()
+        });
         Server {
             addr,
             state,
@@ -319,6 +329,15 @@ impl Server {
 
     /// Returns status, content-type and body.
     pub async fn http(&self, method: Method, path: &str) -> (StatusCode, Option<String>, Bytes) {
+        self.http_body(method, path, Bytes::new()).await
+    }
+
+    pub async fn http_body(
+        &self,
+        method: Method,
+        path: &str,
+        request_body: Bytes,
+    ) -> (StatusCode, Option<String>, Bytes) {
         let stream = TcpStream::connect(self.addr).await.unwrap();
         let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
             .await
@@ -328,7 +347,7 @@ impl Server {
             .method(method)
             .uri(path)
             .header(HOST, self.addr.to_string())
-            .body(Empty::<Bytes>::new())
+            .body(Full::new(request_body))
             .unwrap();
         let res = sender.send_request(req).await.unwrap();
         let status = res.status();
