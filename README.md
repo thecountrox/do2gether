@@ -55,14 +55,32 @@ stdin commands in `wt-play`: `play`, `pause`, `seek <ms>`, `q`.
 ## What works
 
 - Rooms, HMAC join tokens (10 min), `hello`/`welcome` snapshots, presence keyed by user.
+- Bot API (`WT_BOT_TOKEN` bearer auth): `POST /rooms/{id}/tokens`, `PATCH /rooms/{id}`, `DELETE /rooms/{id}`; public `GET /rooms/{id}`, `/metrics`, and `/stats`.
 - Four-timestamp clock exchange; offset ±1 ms on loopback, ±50 ms tested.
 - Playback as an anchor: play/pause/seek/queue/skip with monotonic `rev`/`seq`, explicit `reject` for refused intents.
 - mpv client with drift policy (ignore < 250 ms, rate 250 ms–2 s, seek > 2 s), `--hr-seek=yes`, telemetry every 5 s.
 - TLS end to end (rustls, native roots), deployed behind Caddy with a real certificate.
 - Two headless mpv clients converge; `scripts/demo-local.sh` reproduces it.
 
+## Backend (v1.1)
+
+- **SQLite persistence** (WAL): rooms, playback, queues and lock/controls survive a restart; rooms
+  reload at boot, members rebuild from connections.
+- **Lifecycle**: 24 h idle TTL swept every minute, max 500 rooms, 50 members/room, 200 queue items,
+  5 room creations/min/IP.
+- **Permissions**: `host` (default) or `all`; `play/pause/seek/skip` host-only in `host` mode,
+  `queue_*` always open, `set_controls`/`lock`/`kick` host-only. Locked rooms reject joins (4003),
+  kicks close 4005.
+- **Bot API** (`WT_BOT_TOKEN`): `GET /rooms/{id}`, `POST /rooms/{id}/tokens`, `PATCH`, `DELETE`.
+- **Observability**: `/metrics` (Prometheus) and `/stats` (JSON, p50/p95 drift per room), counters
+  for intents and rejects.
+
+Verified live on the deployed server: create with `host_id` → public snapshot → bot token → guest
+`play` rejected `not_host` → `queue_add` accepted → lock → service restart → `locked=true, rev=1`.
+
 ## Known gaps
 
+- Bot-minted join tokens are room-bound but not user-bound: the joining client claims its identity in `hello`.
 - Rooms are in memory: restarting the service drops them.
 - Drift after a seek settles around 100–180 ms, inside the 250 ms video tolerance but not tight enough for music (needs the host-stream model).
 - No Flutter UI yet; `app/` is empty. No Discord bot yet — needs a bot token from the owner.

@@ -1,7 +1,7 @@
 //! The room state machine. Synchronous: callers hold the room lock for one message at a time,
 //! so every client's queue receives broadcasts in `seq` order.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Display;
 use std::sync::Arc;
 
@@ -12,6 +12,7 @@ use wt_protocol::{
 };
 
 use crate::clock::server_now;
+use crate::observability::Counters;
 use crate::store::Store;
 
 pub type ConnId = u64;
@@ -65,6 +66,9 @@ pub struct Room {
     pub seq: u64,
     pub playback: Option<Playback>,
     pub queue: Vec<QueueItem>,
+    pub(crate) corrections: u64,
+    drift: VecDeque<f64>,
+    pub(crate) counters: Option<Arc<Counters>>,
     clients: HashMap<ConnId, Client>,
     /// In join order; each `user_id` once.
     presence: Vec<Presence>,
@@ -92,6 +96,9 @@ impl Room {
             seq: 0,
             playback: None,
             queue: Vec::new(),
+            corrections: 0,
+            drift: VecDeque::new(),
+            counters: None,
             clients: HashMap::new(),
             presence: Vec::new(),
             next_conn: 0,
@@ -105,6 +112,20 @@ impl Room {
 
     pub fn member_count(&self) -> usize {
         self.presence.len()
+    }
+
+    pub fn members(&self) -> Vec<Member> {
+        self.presence.iter().map(|p| p.member.clone()).collect()
+    }
+
+    pub(crate) fn drift_quantiles(&self) -> (Option<f64>, Option<f64>) {
+        if self.drift.is_empty() {
+            return (None, None);
+        }
+        let mut sorted: Vec<_> = self.drift.iter().copied().collect();
+        sorted.sort_by(f64::total_cmp);
+        let quantile = |q: f64| sorted[((sorted.len() - 1) as f64 * q).ceil() as usize];
+        (Some(quantile(0.5)), Some(quantile(0.95)))
     }
 
     pub fn expire(&mut self) {
@@ -210,30 +231,45 @@ impl Room {
             }
             ClientMsg::Intent { id, intent } => {
                 let actor = client.user_id.clone().expect("hello completed");
+                let op = intent.as_ref().map_or("invalid", |i| match i {
+                    Intent::Play { .. } => "play",
+                    Intent::Pause => "pause",
+                    Intent::Seek { .. } => "seek",
+                    Intent::Skip => "skip",
+                    Intent::QueueAdd { .. } => "queue_add",
+                    Intent::QueueRemove { .. } => "queue_remove",
+                    Intent::SetControls { .. } => "set_controls",
+                    Intent::Lock { .. } => "lock",
+                    Intent::Kick { .. } => "kick",
+                });
+                let changes_playback = matches!(
+                    &intent,
+                    Ok(Intent::Play { .. } | Intent::Pause | Intent::Seek { .. } | Intent::Skip)
+                );
                 let host = self.host_id.as_deref() == Some(actor.as_str());
                 if self.locked && !host && !matches!(&intent, Ok(Intent::Lock { .. })) {
-                    self.reject_code(conn, id.as_deref(), "locked", "room locked");
+                    self.reject_code(conn, id.as_deref(), "locked", "room locked", op);
                     return;
                 }
-                if let Ok(op) = &intent {
+                if let Ok(parsed) = &intent {
                     let restricted = matches!(
-                        op,
+                        parsed,
                         Intent::SetControls { .. } | Intent::Lock { .. } | Intent::Kick { .. }
                     ) || (self.controls == "host"
                         && matches!(
-                            op,
+                            parsed,
                             Intent::Play { .. }
                                 | Intent::Pause
                                 | Intent::Seek { .. }
                                 | Intent::Skip
                         ));
                     if restricted && !host {
-                        self.reject_code(conn, id.as_deref(), "not_host", "host only");
+                        self.reject_code(conn, id.as_deref(), "not_host", "host only", op);
                         return;
                     }
                 }
                 if matches!(&intent, Ok(Intent::QueueAdd { .. })) && self.queue.len() >= 200 {
-                    self.reject_limit(conn, id.as_deref());
+                    self.reject_limit(conn, id.as_deref(), op);
                     return;
                 }
                 match intent.and_then(|i| {
@@ -243,20 +279,31 @@ impl Room {
                         self.apply(i, server_now()).map(|()| true)
                     }
                 }) {
-                    Ok(true) => self.broadcast_state(),
-                    Ok(false) => {}
-                    Err(e) => self.reject(conn, id.as_deref(), e),
+                    Ok(true) => {
+                        self.record_intent(op, "ok");
+                        if changes_playback {
+                            self.corrections += 1;
+                        }
+                        self.broadcast_state();
+                    }
+                    Ok(false) => self.record_intent(op, "ok"),
+                    Err(e) => self.reject(conn, id.as_deref(), e, op),
                 }
             }
             ClientMsg::Report {
                 activity_id,
                 observed,
             } => {
+                let drift_ms = observed.drift_ms;
                 client.report = Some(Report {
                     activity_id,
                     observed,
                     received_ms: received_at,
                 });
+                if self.drift.len() == 500 {
+                    self.drift.pop_front();
+                }
+                self.drift.push_back(drift_ms);
                 let user_id = client.user_id.clone().unwrap_or_default();
                 let report = client.report.clone().expect("just set");
                 if let Some(store) = &self.store
@@ -423,12 +470,29 @@ impl Room {
         }
     }
 
-    fn reject(&self, conn: ConnId, req_id: Option<&str>, e: IntentError) {
-        eprintln!("[room {}] rejected intent: {e}", self.id);
-        self.reject_code(conn, req_id, INTENT_REJECTED, &e.to_string());
+    fn record_intent(&self, op: &str, result: &'static str) {
+        if let Some(counters) = &self.counters {
+            counters.intent(op, result);
+        }
     }
 
-    fn reject_code(&self, conn: ConnId, req_id: Option<&str>, code: &str, message: &str) {
+    fn reject(&self, conn: ConnId, req_id: Option<&str>, e: IntentError, op: &str) {
+        eprintln!("[room {}] rejected intent: {e}", self.id);
+        self.reject_code(conn, req_id, INTENT_REJECTED, &e.to_string(), op);
+    }
+
+    fn reject_code(
+        &self,
+        conn: ConnId,
+        req_id: Option<&str>,
+        code: &'static str,
+        message: &str,
+        op: &str,
+    ) {
+        self.record_intent(op, "reject");
+        if let Some(counters) = &self.counters {
+            counters.reject(code);
+        }
         let reject = ServerMsg::Reject {
             code,
             message,
@@ -437,19 +501,18 @@ impl Room {
         self.send(conn, &reject);
     }
 
-    fn reject_limit(&self, conn: ConnId, req_id: Option<&str>) {
-        let reject = ServerMsg::Reject {
-            code: "limit",
-            message: "queue is full",
-            req_id,
-        };
-        self.send(conn, &reject);
+    fn reject_limit(&self, conn: ConnId, req_id: Option<&str>, op: &str) {
+        self.reject_code(conn, req_id, "limit", "queue is full", op);
     }
 
-    fn broadcast_state(&mut self) {
+    pub(crate) fn broadcast_state(&mut self) {
         self.rev += 1;
         self.seq += 1;
         self.activity();
+        self.broadcast_state_current();
+    }
+
+    fn broadcast_state_current(&mut self) {
         let state = ServerMsg::State {
             rev: self.rev,
             playback: self.playback.as_ref(),

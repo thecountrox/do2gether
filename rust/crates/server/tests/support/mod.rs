@@ -339,17 +339,29 @@ impl Server {
         path: &str,
         request_body: Bytes,
     ) -> (StatusCode, Option<String>, Bytes) {
+        self.http_auth(method, path, request_body, None).await
+    }
+
+    pub async fn http_auth(
+        &self,
+        method: Method,
+        path: &str,
+        request_body: Bytes,
+        token: Option<&str>,
+    ) -> (StatusCode, Option<String>, Bytes) {
         let stream = TcpStream::connect(self.addr).await.unwrap();
         let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
             .await
             .unwrap();
         tokio::spawn(conn);
-        let req = Request::builder()
+        let mut builder = Request::builder()
             .method(method)
             .uri(path)
-            .header(HOST, self.addr.to_string())
-            .body(Full::new(request_body))
-            .unwrap();
+            .header(HOST, self.addr.to_string());
+        if let Some(token) = token {
+            builder = builder.header("authorization", format!("Bearer {token}"));
+        }
+        let req = builder.body(Full::new(request_body)).unwrap();
         let res = sender.send_request(req).await.unwrap();
         let status = res.status();
         let content_type = res
