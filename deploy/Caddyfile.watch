@@ -1,0 +1,18 @@
+# Append this block to /home/ubuntu/.local/etc/caddy/Caddyfile, then:
+#   sudo systemctl restart pull-picker-proxy.service
+#
+# sslip.io encodes the IP in the name, so no DNS account is needed.
+# flush_interval -1 keeps the WebSocket frames unbuffered.
+
+watch.141.253.97.15.sslip.io {
+	encode zstd gzip
+
+	reverse_proxy 127.0.0.1:8787 {
+		flush_interval -1
+	}
+
+	log {
+		output file /home/ubuntu/.local/share/caddy/watch-access.log
+		format console
+	}
+}

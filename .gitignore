@@ -1,0 +1,7 @@
+node_modules/
+cc_*.json
+cc_*.log
+cc_*.err
+cc_*.status
+deploy/wt-server.env
+rust/target/

@@ -1,0 +1,11 @@
+[package]
+name = "wt-protocol"
+description = "watch-together room protocol v1: serde types, item_ref parsing, position math. No I/O."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

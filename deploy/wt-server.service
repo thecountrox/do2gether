@@ -1,0 +1,22 @@
+[Unit]
+Description=watch-together room server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/watch-together/rust
+EnvironmentFile=/home/ubuntu/watch-together/deploy/wt-server.env
+ExecStart=/home/ubuntu/watch-together/rust/target/release/wt-server
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/watch-together
+
+[Install]
+WantedBy=multi-user.target
