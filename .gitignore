@@ -10,3 +10,11 @@ rust/target/
 *.apk
 deploy/discord-bot.env
 bot/dist/
+
+# runtime data
+data/
+
+oc_*.log
+oc_*.status
+cc_*.json
+cc_*.err
