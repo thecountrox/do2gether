@@ -8,3 +8,4 @@ rust/target/
 
 # build outputs
 *.apk
+deploy/discord-bot.env

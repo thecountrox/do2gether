@@ -56,3 +56,18 @@ tail -f ~/.local/share/caddy/watch-access.log
 - `BIND=127.0.0.1` is deliberate: Caddy is the only public door.
 - `WT_SECRET` is generated with `openssl rand -hex 32`; rotating it invalidates every outstanding join token (10-minute TTL), which is the intended kill switch.
 - Rooms live in memory. Restarting the service drops all rooms; clients get 4004 on reconnect and must create a new room.
+
+## Discord bot (created 2026-11-08)
+
+App: `watch-together`, id `1568915821739249716`, bot user `watch-together#6690`.
+Credentials live in `deploy/discord-bot.env` (gitignored, mode 600): `DISCORD_TOKEN`,
+`DISCORD_APP_ID`, `WATCH_SERVER`, `WT_BOT_TOKEN` (the room server's bot API key).
+
+Invite (View Channels, Send Messages, Embed Links, Read Message History):
+
+```
+https://discord.com/oauth2/authorize?client_id=1568915821739249716&scope=bot+applications.commands&permissions=84992
+```
+
+The token is verified against `GET /users/@me` (200, bot: true). The bot process itself is not
+written yet; it reads this env file.
