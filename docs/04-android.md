@@ -87,6 +87,41 @@ nix shell nixpkgs#flutter -c bash -c '
 `app-arm64-v8a-debug.apk` is the phone build.
 
 
+## Release build on gigapc (x86_64)
+
+The arm64 host cannot produce a release APK (no AOT `gen_snapshot` in the nix SDK), so releases are
+built on gigapc over Tailscale SSH. It has an x86_64 Android SDK (build-tools 35/36/37, platform 36),
+JDK 21, and 28 cores.
+
+```bash
+# one-time: Flutter SDK (official x64 tarball)
+cd ~ && curl -LO https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.47.9-stable.tar.xz
+tar xf flutter_linux_3.47.9-stable.tar.xz
+
+# sync the project (rsync kept failing to create the target dir; tar over ssh works)
+tar czf - --exclude='app/build' --exclude='app/.dart_tool' app protocol \
+  | ssh thecount@gigapc 'tar xzf - -C ~/watch-together'
+
+# local.properties on gigapc
+printf 'sdk.dir=/home/thecount/android-sdk\nflutter.sdk=/home/thecount/flutter\n' \
+  > ~/watch-together/app/android/local.properties
+
+cd ~/watch-together/app && ~/flutter/bin/flutter build apk --release --split-per-abi
+```
+
+Two host-specific workarounds:
+
+1. **`gradlew` shebang.** Flutter generated it with `#!/nix/store/...-bash/bin/bash`, which does not
+   exist on gigapc. The repo now carries `#!/usr/bin/env bash`.
+2. **libmpv jar download.** `media_kit_libs_android_video` fetches four jars from GitHub at
+   configuration time; gigapc's network times out. Seed them from the arm64 host
+   (`app/build/media_kit_libs_android_video/v1.1.7/*.jar`) into `v1.1.7/` and `output/`, then comment
+   `assemble.dependsOn(downloadDependencies)` in
+   `~/.pub-cache/hosted/pub.dev/media_kit_libs_android_video-1.3.8/android/build.gradle`.
+
+Outputs: `app-arm64-v8a-release.apk` 30.8 MB, `app-universal-release.apk` 89 MB. Signed with the
+Flutter template's debug key.
+
 ## Known limits
 
 - qemu makes aapt2 slow; expect the first build to take several minutes.

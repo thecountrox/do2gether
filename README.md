@@ -8,11 +8,12 @@ Watch, listen and play together. One room, two modes, Discord as the lobby.
 `media_kit` player keyed by the same `item_ref`, drift correction and telemetry. `flutter analyze`,
 26 tests and `flutter build linux --debug` are green; the bundle launches under Xvfb.
 
-**Android:** the same Flutter app builds an APK on this aarch64 host (SDK tools run through qemu):
-`app-arm64-v8a-debug.apk`, 95 MB, minSdk 24, target 36, `libmpv.so` bundled.
-Download: https://files.141.253.97.15.sslip.io/user_uploads/watch-together/app-arm64-v8a-debug.apk
-Build recipe and limitations: `docs/04-android.md`. Release AOT builds are blocked by the nix SDK
-(no Android `gen_snapshot` for linux-arm64); debug APKs are functional.
+**Android:** release APK (AOT, `libmpv.so` bundled, minSdk 24, target 36):
+`app-arm64-v8a-release.apk`, 30.8 MB — https://files.141.253.97.15.sslip.io/user_uploads/watch-together/app-arm64-v8a-release.apk
+Universal APK (all three ABIs, 89 MB): https://files.141.253.97.15.sslip.io/user_uploads/watch-together/app-universal-release.apk
+Built on gigapc (x86_64) because the nix Flutter SDK on this arm64 host has no Android AOT
+`gen_snapshot`; recipe in `docs/04-android.md`. Release is signed with the Flutter template's debug
+key — installable, not Play-signed.
 
 ## Layout
 

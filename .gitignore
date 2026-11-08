@@ -5,3 +5,6 @@ cc_*.err
 cc_*.status
 deploy/wt-server.env
 rust/target/
+
+# build outputs
+*.apk
