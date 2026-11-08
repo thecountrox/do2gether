@@ -3,11 +3,17 @@ import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import 'player.dart';
 import 'protocol.dart';
 import 'room_client.dart';
+import 'theme.dart';
+import 'widgets/button.dart';
+import 'widgets/chrome.dart';
+import 'widgets/identity.dart';
+import 'widgets/sparkles.dart';
 
 const Duration pollEvery = Duration(seconds: 1);
 const Duration reportEvery = Duration(seconds: 5);
@@ -39,10 +45,14 @@ class _RoomScreenState extends State<RoomScreen> {
   late final Timer _pollTimer;
   late final Timer _reportTimer;
   final List<Member> _members = [];
+  List<QueueItem> _queue = [];
   int _rev = 0;
   Playback? _anchor;
   bool _clockWasReady = false;
   bool _opening = false;
+  bool _copied = false;
+  bool _muted = false;
+  Timer? _copyTimer;
 
   bool get _joined => _client.status == ConnectionStatus.joined;
 
@@ -66,6 +76,7 @@ class _RoomScreenState extends State<RoomScreen> {
   void dispose() {
     _pollTimer.cancel();
     _reportTimer.cancel();
+    _copyTimer?.cancel();
     _client.close();
     _player.dispose();
     super.dispose();
@@ -86,6 +97,7 @@ class _RoomScreenState extends State<RoomScreen> {
         setState(() {
           _rev = snapshot.rev;
           _anchor = snapshot.playback;
+          _queue = snapshot.queue;
           _members
             ..clear()
             ..addAll(snapshot.presence);
@@ -95,6 +107,7 @@ class _RoomScreenState extends State<RoomScreen> {
         setState(() {
           _rev = state.rev;
           _anchor = state.playback;
+          _queue = state.queue;
         });
         _apply();
       case PresenceMsg p:
@@ -103,7 +116,8 @@ class _RoomScreenState extends State<RoomScreen> {
           if (p.joined) _members.add(Member(userId: p.userId, name: p.name));
         });
       case RejectMsg(:final message):
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
       default:
         break;
     }
@@ -122,7 +136,9 @@ class _RoomScreenState extends State<RoomScreen> {
   }
 
   void _report() {
-    if (_joined && _client.clock.ready) _client.sendReport(_player.driftMs ?? 0);
+    if (_joined && _client.clock.ready) {
+      _client.sendReport(_player.driftMs ?? 0);
+    }
   }
 
   Future<void> _openFile() async {
@@ -133,7 +149,8 @@ class _RoomScreenState extends State<RoomScreen> {
       await _player.open(file.path);
     } on Object catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Open failed: $e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Open failed: $e')));
       }
     } finally {
       if (mounted) setState(() => _opening = false);
@@ -150,7 +167,9 @@ class _RoomScreenState extends State<RoomScreen> {
 
   void _seekBy(int deltaMs) {
     final anchor = _anchor;
-    final now = anchor == null ? _player.positionMs : positionAt(anchor, _client.clock.serverNow());
+    final now = anchor == null
+        ? _player.positionMs
+        : positionAt(anchor, _client.clock.serverNow());
     _client.sendIntent('seek', {'position_ms': math.max(0, now + deltaMs)});
   }
 
@@ -158,34 +177,192 @@ class _RoomScreenState extends State<RoomScreen> {
     final anchor = _anchor;
     if (_player.itemRef == null) return 'no local file';
     if (anchor == null) return 'room is idle';
-    return anchor.itemRef == _player.itemRef ? 'local file matches' : 'waiting for host file';
+    return anchor.itemRef == _player.itemRef
+        ? 'local file matches'
+        : 'waiting for host file';
+  }
+
+  void _copyRoom() {
+    Clipboard.setData(ClipboardData(text: widget.room));
+    setState(() => _copied = true);
+    _copyTimer?.cancel();
+    _copyTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  void _toggleMute() {
+    setState(() => _muted = !_muted);
+    _player.player.setVolume(_muted ? 0 : 100);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('Room ${widget.room}')),
-      body: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+    return WtScaffold(
+      child: WtBackground(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final wide = constraints.maxWidth >= 900;
+            return Row(
               children: [
-                Expanded(child: _videoArea()),
-                _controls(),
-                _nowPlaying(context),
+                Expanded(
+                  child: Stack(
+                    children: [
+                      Positioned.fill(child: WtSparkles(seed: widget.room)),
+                      Positioned.fill(
+                        child: Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            wide ? 24 : 12,
+                            72,
+                            wide ? 24 : 12,
+                            88,
+                          ),
+                          child: Center(
+                            child: AspectRatio(
+                              aspectRatio: 16 / 9,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(24),
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: WtColors.bg,
+                                    borderRadius: BorderRadius.circular(24),
+                                    border: Border.all(
+                                      color: WtColors.highlight,
+                                      width: 2,
+                                    ),
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(22),
+                                    child: _videoArea(),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        top: 12,
+                        left: 12,
+                        right: 12,
+                        child: _topRow(wide),
+                      ),
+                      if (!_joined)
+                        Positioned(
+                          top: 64,
+                          left: 16,
+                          right: 16,
+                          child: const WtBanner(
+                            message: 'Reconnecting…',
+                            color: WtColors.warn,
+                          ),
+                        ),
+                      Positioned(
+                        bottom: 16,
+                        left: 16,
+                        right: 16,
+                        child: Center(child: _controls()),
+                      ),
+                    ],
+                  ),
+                ),
+                if (wide)
+                  Container(
+                    width: 320,
+                    decoration: const BoxDecoration(
+                      color: WtColors.surface,
+                      border: Border(
+                        left: BorderSide(color: WtColors.stroke, width: 2),
+                      ),
+                    ),
+                    child: _sidebar(),
+                  ),
               ],
-            ),
-          ),
-          const VerticalDivider(width: 1),
-          SizedBox(width: 280, child: _sidebar(context)),
-        ],
+            );
+          },
+        ),
       ),
     );
   }
 
+  Widget _topRow(bool wide) {
+    final drift = _player.driftMs?.abs();
+    final synced = _joined && _client.clock.ready && drift != null;
+    final color = !_joined || (synced && drift >= 400)
+        ? WtColors.danger
+        : synced && drift < 80
+        ? WtColors.live
+        : WtColors.warn;
+    final label = !_joined
+        ? 'off'
+        : !synced
+        ? 'syncing'
+        : drift < 80
+        ? '${drift.round()} ms · in sync'
+        : drift < 400
+        ? '${drift.round()} ms · syncing'
+        : 'off';
+    return Row(
+      children: [
+        _iconButton(
+          Icons.chevron_left,
+          'Back',
+          () => Navigator.of(context).pop(),
+        ),
+        const SizedBox(width: 6),
+        WtChip(
+          label: _copied ? 'copied' : widget.room,
+          onTap: _copyRoom,
+          icon: Icons.copy_outlined,
+          tilt: 0.018,
+        ),
+        const Spacer(),
+        WtChip(label: label, color: color, icon: null, tilt: -0.014),
+        const SizedBox(width: 8),
+        WtSyncDot(color: color, connected: _joined),
+        const SizedBox(width: 12),
+        if (wide)
+          WtAvatarStack(members: _members)
+        else
+          _iconButton(
+            Icons.people_outline,
+            'People',
+            () => WtSheet.show<void>(
+              context,
+              title: 'In this room',
+              child: _roomSections(),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _iconButton(
+    IconData icon,
+    String tooltip,
+    VoidCallback? action, {
+    bool compact = false,
+  }) => Tooltip(
+    message: tooltip,
+    child: IconButton(
+      onPressed: action,
+      icon: Icon(icon),
+      iconSize: compact ? 20 : 24,
+      constraints: compact
+          ? const BoxConstraints.tightFor(width: 36, height: 36)
+          : null,
+      padding: compact ? EdgeInsets.zero : null,
+      color: WtColors.text,
+      style: IconButton.styleFrom(
+        backgroundColor: WtColors.surface,
+        disabledForegroundColor: WtColors.muted,
+      ),
+    ),
+  );
+
   Widget _videoArea() {
+    final empty =
+        _player.itemRef == null || _matchState == 'waiting for host file';
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -194,107 +371,185 @@ class _RoomScreenState extends State<RoomScreen> {
           controls: NoVideoControls,
           pauseUponEnteringBackgroundMode: false,
         ),
-        if (_player.itemRef == null || _matchState == 'waiting for host file')
-          Center(
-            child: Text(
-              _opening ? 'Hashing file…' : _matchState,
-              style: const TextStyle(color: Colors.white70, fontSize: 18),
+        if (empty) ...[
+          const ColoredBox(color: WtColors.surface),
+          const Positioned.fill(child: WtSparkles()),
+          const Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  colors: [Color(0x002A1A4A), Color(0xB0170F2B)],
+                ),
+              ),
             ),
+          ),
+        ],
+        if (empty)
+          Center(
+            child: _anchor != null && _matchState != 'local file matches'
+                ? WtEmptyState(
+                    icon: Icons.hourglass_top,
+                    message: "Waiting for the host's file",
+                    outlined: true,
+                    action: WtButton(
+                      label: 'Open file',
+                      icon: Icons.folder_open,
+                      onPressed: _opening ? null : _openFile,
+                    ),
+                  )
+                : WtEmptyState(
+                    icon: Icons.movie_outlined,
+                    message: _opening
+                        ? 'Hashing file…'
+                        : 'Open a file to watch together',
+                    action: WtButton(
+                      label: 'Open file',
+                      icon: Icons.folder_open,
+                      onPressed: _opening ? null : _openFile,
+                    ),
+                  ),
           ),
       ],
     );
   }
 
   Widget _controls() {
-    final enabled = _joined;
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
+    final enabled =
+        _joined &&
+        _player.itemRef != null &&
+        _matchState != 'waiting for host file';
+    final playing = _anchor != null && !_anchor!.paused;
+    final current = _anchor == null
+        ? _player.positionMs
+        : positionAt(_anchor!, _client.clock.serverNow());
+    final total = _player.player.state.duration.inMilliseconds;
+    return WtGlassBar(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          OutlinedButton.icon(
-            onPressed: _opening ? null : _openFile,
-            icon: const Icon(Icons.folder_open),
-            label: const Text('Open file…'),
+          Container(
+            width: 40,
+            height: 40,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                colors: [WtColors.pink, WtColors.violet],
+              ),
+            ),
+            child: IconButton(
+              tooltip: playing ? 'Pause' : 'Play',
+              icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+              iconSize: 22,
+              padding: EdgeInsets.zero,
+              color: WtColors.bg,
+              disabledColor: WtColors.bg.withValues(alpha: 0.4),
+              onPressed: enabled ? (playing ? _pause : _play) : null,
+            ),
           ),
-          FilledButton.icon(
-            onPressed: enabled ? _play : null,
-            icon: const Icon(Icons.play_arrow),
-            label: const Text('Play'),
+          _iconButton(
+            Icons.replay_10,
+            'Back 10 seconds',
+            enabled ? () => _seekBy(-seekStepMs) : null,
+            compact: true,
           ),
-          FilledButton.tonalIcon(
-            onPressed: enabled ? _pause : null,
-            icon: const Icon(Icons.pause),
-            label: const Text('Pause'),
+          _iconButton(
+            Icons.forward_10,
+            'Forward 10 seconds',
+            enabled ? () => _seekBy(seekStepMs) : null,
+            compact: true,
           ),
-          OutlinedButton(
-            onPressed: enabled ? () => _seekBy(-seekStepMs) : null,
-            child: const Text('-10 s'),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              '${_fmt(current)} / ${_fmt(total)}',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 12,
+                color: enabled
+                    ? WtColors.muted
+                    : WtColors.muted.withValues(alpha: 0.4),
+              ),
+            ),
           ),
-          OutlinedButton(
-            onPressed: enabled ? () => _seekBy(seekStepMs) : null,
-            child: const Text('+10 s'),
+          const SizedBox(width: 8),
+          _iconButton(
+            _muted ? Icons.volume_off : Icons.volume_up,
+            _muted ? 'Unmute' : 'Mute',
+            enabled ? _toggleMute : null,
+            compact: true,
+          ),
+          _iconButton(
+            Icons.fullscreen,
+            'Fullscreen unavailable',
+            null,
+            compact: true,
           ),
         ],
       ),
     );
   }
 
-  Widget _nowPlaying(BuildContext context) {
-    final anchor = _anchor;
-    final room = anchor == null
-        ? 'nothing'
-        : '${anchor.itemRef} (${anchor.paused ? 'paused' : 'playing'} at ${_fmt(positionAt(anchor, _client.clock.serverNow()))})';
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      child: DefaultTextStyle.merge(
-        style: Theme.of(context).textTheme.bodySmall,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SelectableText('Now playing: $room'),
-            SelectableText('Local file: ${_player.path ?? '—'}  ${_player.itemRef ?? ''}'),
-            Text('Match: $_matchState · player: ${_player.status}'),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget _sidebar() =>
+      ListView(padding: const EdgeInsets.all(24), children: [_roomSections()]);
 
-  Widget _sidebar(BuildContext context) {
-    final clock = _client.clock;
-    final drift = _player.driftMs;
-    final text = Theme.of(context).textTheme;
-    return ListView(
-      padding: const EdgeInsets.all(12),
-      children: [
-        Text('Connection', style: text.titleSmall),
-        Text(_client.status.name),
-        if (_client.closeReason case final reason? when _client.status == ConnectionStatus.closed)
-          Text(reason, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-        const SizedBox(height: 12),
-        Text('Sync', style: text.titleSmall),
-        Text(
-          clock.ready
-              ? 'offset ${clock.offsetMs.toStringAsFixed(1)} ms · rtt ${clock.rttMs.toStringAsFixed(1)} ms'
-              : 'clock syncing…',
-        ),
-        Text('rev $_rev'),
-        Text('drift ${drift == null ? '—' : '${drift.round()} ms'}'),
-        const SizedBox(height: 12),
-        Text('People (${_members.length})', style: text.titleSmall),
-        for (final m in _members)
-          ListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.person_outline),
-            title: Text(m.name ?? m.userId),
-            subtitle: m.userId == _client.clientId ? const Text('you') : null,
+  Widget _roomSections() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text('In this room', style: Theme.of(context).textTheme.titleLarge),
+      const SizedBox(height: 16),
+      for (final m in _members)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Row(
+            children: [
+              WtAvatar(id: m.userId, name: m.name ?? m.userId),
+              const SizedBox(width: 12),
+              Flexible(
+                child: Text(
+                  m.name ?? m.userId,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (m.userId == _client.clientId) ...[
+                const SizedBox(width: 8),
+                const WtChip(label: 'you', color: WtColors.live),
+              ],
+            ],
           ),
-      ],
-    );
-  }
+        ),
+      const SizedBox(height: 32),
+      WtButton(
+        label: _opening ? 'Hashing file…' : 'Open file',
+        icon: Icons.folder_open,
+        style: WtButtonStyle.ghost,
+        onPressed: _opening ? null : _openFile,
+      ),
+      const SizedBox(height: 32),
+      Text('Queue', style: Theme.of(context).textTheme.titleLarge),
+      const SizedBox(height: 16),
+      if (_queue.isEmpty)
+        const Text('Nothing queued', style: TextStyle(color: WtColors.muted))
+      else
+        for (final item in _queue)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Tooltip(
+              message: item.itemRef,
+              child: Text(
+                item.itemRef.length > 28
+                    ? '${item.itemRef.substring(0, 28)}…'
+                    : item.itemRef,
+                style: const TextStyle(
+                  color: WtColors.muted,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+          ),
+    ],
+  );
 }
 
 String _fmt(int ms) {

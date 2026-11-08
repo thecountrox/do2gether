@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
-import 'join_screen.dart';
+import 'home_screen.dart';
+import 'theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -16,11 +17,8 @@ class WatchTogetherApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'watch-together',
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal, brightness: Brightness.dark),
-      ),
-      home: const JoinScreen(),
+      theme: wtTheme(),
+      home: const HomeScreen(),
     );
   }
 }

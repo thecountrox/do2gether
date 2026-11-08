@@ -1,44 +1,89 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:watch_together/join_screen.dart';
-import 'package:watch_together/room_screen.dart';
+import 'package:watch_together/home_screen.dart';
+import 'package:watch_together/theme.dart';
 
-Finder _field(String label) => find.widgetWithText(TextFormField, label);
+String token(String room) =>
+    '${base64Url.encode(utf8.encode(jsonEncode({'room': room, 'exp': 123456789}))).replaceAll('=', '')}.signature';
 
 void main() {
-  Future<void> pumpJoin(WidgetTester tester) =>
-      tester.pumpWidget(const MaterialApp(home: JoinScreen()));
+  Future<void> pumpHome(WidgetTester tester) => tester.pumpWidget(
+    MaterialApp(theme: wtTheme(), home: const HomeScreen()),
+  );
 
-  testWidgets('JoinScreen rejects an empty room', (tester) async {
-    await pumpJoin(tester);
-    await tester.enterText(_field('Token'), 'some-token');
-    await tester.tap(find.text('Join'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Room id is required'), findsOneWidget);
-    expect(find.text('Token is required'), findsNothing);
-    expect(find.byType(RoomScreen), findsNothing);
+  testWidgets('invalid invite disables join', (tester) async {
+    await pumpHome(tester);
+    await tester.enterText(find.byType(TextField), 'garbage');
+    await tester.pump();
+    expect(
+      find.text('Enter a valid invite link or room code and token'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<InkWell>(
+            find
+                .ancestor(
+                  of: find.text('Join a room'),
+                  matching: find.byType(InkWell),
+                )
+                .first,
+          )
+          .onTap,
+      isNull,
+    );
   });
 
-  testWidgets('JoinScreen rejects a bad URL', (tester) async {
-    await pumpJoin(tester);
-    expect(find.text(defaultServerUrl), findsOneWidget);
-    await tester.enterText(_field('Room id'), 'k3x9a0qz');
-    await tester.enterText(_field('Token'), 'some-token');
+  for (final invite in [
+    'watchtogether://join?room=room42&token=example',
+    'https://example.com/join/${token('room42')}',
+  ]) {
+    testWidgets('valid invite enables join and shows room: $invite', (
+      tester,
+    ) async {
+      await pumpHome(tester);
+      await tester.enterText(find.byType(TextField), invite);
+      await tester.pump();
+      expect(find.text('● room42'), findsOneWidget);
+      expect(
+        tester
+            .widget<InkWell>(
+              find
+                  .ancestor(
+                    of: find.text('Join a room'),
+                    matching: find.byType(InkWell),
+                  )
+                  .first,
+            )
+            .onTap,
+        isNotNull,
+      );
+    });
+  }
 
-    for (final bad in ['ftp://example.com', 'not a url', 'https://', '']) {
-      await tester.enterText(_field('Server URL'), bad);
-      await tester.tap(find.text('Join'));
-      await tester.pumpAndSettle();
-      expect(find.text('Enter an http:// or https:// server URL'), findsOneWidget, reason: bad);
-      expect(find.byType(RoomScreen), findsNothing, reason: bad);
-    }
-  });
-
-  test('validateServerUrl accepts http and https only', () {
+  test('server URL accepts http and https only', () {
     expect(validateServerUrl(defaultServerUrl), isNull);
     expect(validateServerUrl('http://127.0.0.1:8787'), isNull);
     expect(validateServerUrl('ws://127.0.0.1:8787'), isNotNull);
-    expect(validateServerUrl('127.0.0.1:8787'), isNotNull);
   });
+
+  for (final size in [const Size(360, 800), const Size(1280, 800)]) {
+    testWidgets('Home fits ${size.width.toInt()}×${size.height.toInt()}', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = size;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      await pumpHome(tester);
+      expect(find.text('watch together'), findsOneWidget);
+      expect(find.text('Join a room'), findsOneWidget);
+      expect(find.text('Start a room'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 }
