@@ -1,0 +1,23 @@
+[Unit]
+Description=watch-together Discord bot
+After=network-online.target wt-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/watch-together/bot
+EnvironmentFile=/home/ubuntu/watch-together/deploy/discord-bot.env
+Environment=PATH=/home/ubuntu/.nix-profile/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/ubuntu/.nix-profile/bin/node dist/index.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/watch-together
+
+[Install]
+WantedBy=multi-user.target

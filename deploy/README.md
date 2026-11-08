@@ -71,3 +71,9 @@ https://discord.com/oauth2/authorize?client_id=1568915821739249716&scope=bot+app
 
 The token is verified against `GET /users/@me` (200, bot: true). The bot process itself is not
 written yet; it reads this env file.
+
+### Bot service
+
+`wt-bot.service` runs `bot/dist/index.js` with `deploy/discord-bot.env`; it registers `/room` in every
+guild it joins on startup. Rebuild with `cd bot && npm run build && sudo systemctl restart wt-bot`.
+Logs: `journalctl -u wt-bot -f`. It logs `logged in as watch-together#6690, guilds=N` on ready.
