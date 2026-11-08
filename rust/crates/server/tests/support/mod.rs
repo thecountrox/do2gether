@@ -22,6 +22,7 @@ use tokio::time::{Instant, sleep, timeout, timeout_at};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use wt_protocol::{ITEM_REF_PATTERN, is_item_ref};
+use wt_server::tokens::sign_token;
 use wt_server::{AppState, SharedRoom, router};
 
 pub const FILM: &str =
@@ -249,7 +250,7 @@ fn validate(schema: &Value, v: &Value, path: &str, errs: &mut Vec<String>) {
 // Server + clients
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RoomInfo {
     pub room_id: String,
     pub join_token: String,
@@ -396,7 +397,12 @@ impl Server {
     }
 
     pub async fn connect(&self, id: &str, room: &RoomInfo) -> Client {
-        let (ws, _) = connect_async(self.ws_url(&room.room_id, &room.join_token))
+        let token = if id == room.host_id {
+            room.join_token.clone()
+        } else {
+            sign_token(&room.room_id)
+        };
+        let (ws, _) = connect_async(self.ws_url(&room.room_id, &token))
             .await
             .unwrap();
         let (sink, mut stream) = ws.split();

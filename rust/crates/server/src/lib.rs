@@ -1,6 +1,7 @@
 //! watch-together room server: HTTP routes and shared state. See `main.rs` for the binary.
 
 pub mod clock;
+mod join;
 mod observability;
 pub mod room;
 pub mod store;
@@ -25,7 +26,7 @@ use serde_json::{Value, json};
 use crate::observability::Counters;
 use crate::room::Room;
 use crate::store::Store;
-use crate::tokens::{TOKEN_TTL_MS, sign_token};
+use crate::tokens::{TOKEN_TTL_MS, sign_token_for};
 
 pub type SharedRoom = Arc<Mutex<Room>>;
 
@@ -244,6 +245,7 @@ pub fn router(state: AppState) -> Router {
                 .fallback(not_found),
         )
         .route("/rooms/{id}/tokens", post(mint_token).fallback(not_found))
+        .route("/join/{token}", get(join::page).fallback(not_found))
         .route("/metrics", get(metrics).fallback(not_found))
         .route("/stats", get(stats).fallback(not_found))
         .route("/ws", get(ws::upgrade).fallback(not_found))
@@ -296,7 +298,7 @@ async fn create_room(
             Json(json!({ "error": "room_limit" })),
         );
     };
-    let join_token = sign_token(&room_id);
+    let join_token = sign_token_for(&room_id, Some(&host_id));
     (
         StatusCode::CREATED,
         Json(json!(Created {
@@ -377,7 +379,7 @@ async fn mint_token(
     {
         return (StatusCode::CONFLICT, Json(json!({"error":"room_full"}))).into_response();
     }
-    Json(json!({"join_token":sign_token(&id), "room_id":id, "expires_in_ms":TOKEN_TTL_MS}))
+    Json(json!({"join_token":sign_token_for(&id, Some(&info.user_id)), "room_id":id, "expires_in_ms":TOKEN_TTL_MS}))
         .into_response()
 }
 

@@ -105,10 +105,13 @@ async fn bot_auth_snapshot_and_tokens() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(minted["expires_in_ms"], 600_000);
-    assert!(verify_token(
-        minted["join_token"].as_str().unwrap(),
-        &room.room_id
-    ));
+    assert_eq!(
+        verify_token(minted["join_token"].as_str().unwrap(), &room.room_id)
+            .unwrap()
+            .sub
+            .as_deref(),
+        Some("bob")
+    );
     assert_eq!(
         request(
             &server,

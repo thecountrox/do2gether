@@ -10,6 +10,12 @@ Ordered by leverage, not novelty.
 **Problem.** The bot DMs a raw room id and token; the app takes both by paste. `hello` claims its
 own `user_id`, so a token is room-bound but not user-bound.
 
+**Status 2026-11-08 — server half done.** `GET /join/<token>` renders a mobile-first invite page
+with a `watchtogether://join?room=…&token=…` button and a copy fallback; tokens carry an optional
+`sub` claim and `hello` must match it (4001 `identity mismatch` otherwise); `POST /rooms` binds the
+host, `/tokens` binds the invitee; the bot's invite DM now sends the link. 63 Rust tests.
+Remaining: Flutter deep-link handling (`watchtogether://`) so the app opens prefilled.
+
 **Work.**
 - `GET /join/<token>` on the room server: decode the token, show room id, "Open the app" button
   (`watchtogether://join?room=…&token=…`), and a copyable manual fallback.

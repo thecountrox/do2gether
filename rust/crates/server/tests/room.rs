@@ -16,6 +16,7 @@ use support::*;
 use tokio::time::sleep;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use wt_protocol::Observed;
+use wt_server::tokens::sign_token_for;
 use wt_server::tokens::{sign_token, sign_token_with_ttl, verify_token};
 
 fn is_leave(m: &Value) -> bool {
@@ -81,7 +82,13 @@ async fn ac1_post_rooms_returns_room_id_and_join_token() {
             "{}",
             r.room_id
         );
-        assert!(verify_token(&r.join_token, &r.room_id));
+        assert_eq!(
+            verify_token(&r.join_token, &r.room_id)
+                .unwrap()
+                .sub
+                .as_deref(),
+            Some(r.host_id.as_str())
+        );
         assert!(
             server.state.room(&r.room_id).is_some(),
             "room exists server-side"
@@ -89,7 +96,7 @@ async fn ac1_post_rooms_returns_room_id_and_join_token() {
     }
     assert_ne!(a.room_id, b.room_id);
     assert!(
-        !verify_token(&a.join_token, &b.room_id),
+        verify_token(&a.join_token, &b.room_id).is_none(),
         "token is bound to its room"
     );
 
@@ -98,6 +105,7 @@ async fn ac1_post_rooms_returns_room_id_and_join_token() {
     assert_eq!(parts.len(), 2);
     let claims: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[0]).unwrap()).unwrap();
     assert_eq!(claims["room"], a.room_id.as_str());
+    assert_eq!(claims["sub"], a.host_id.as_str());
     let exp = int(&claims["exp"]);
     let ttl = exp - now_ms();
     assert!(ttl > 9 * 60_000 && ttl <= 10 * 60_000, "ttl {ttl}");
@@ -107,7 +115,7 @@ async fn ac1_post_rooms_returns_room_id_and_join_token() {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "dev-secret".into());
     let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
-    mac.update(format!("{}:{exp}", a.room_id).as_bytes());
+    mac.update(format!("{}:{exp}:{}", a.room_id, a.host_id).as_bytes());
     assert_eq!(
         parts[1],
         URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
@@ -129,12 +137,12 @@ async fn ac2_bad_tokens_are_closed_with_4001_and_never_join() {
 
     let expired = sign_token_with_ttl(&room.room_id, 100);
     assert!(
-        verify_token(&expired, &room.room_id),
+        verify_token(&expired, &room.room_id).is_some(),
         "short-TTL token is valid before expiry"
     );
     sleep(Duration::from_millis(150)).await;
     assert!(
-        !verify_token(&expired, &room.room_id),
+        verify_token(&expired, &room.room_id).is_none(),
         "short-TTL token fails after expiry"
     );
 
@@ -159,6 +167,80 @@ async fn ac2_bad_tokens_are_closed_with_4001_and_never_join() {
         0,
         "no presence join for rejected sockets"
     );
+}
+
+#[tokio::test]
+async fn bound_hello_rejects_wrong_identity_without_presence_and_accepts_owner() {
+    let server = Server::start().await;
+    let room = server.create_room().await;
+    let (mut observer, _) = server.join("observer", &room).await;
+    let token = sign_token_for(&room.room_id, Some("ann"));
+    let (mut ws, _) = connect_async(server.ws_url(&room.room_id, &token))
+        .await
+        .unwrap();
+    ws.send(Message::text(json!({"v":1,"t":"hello","room":room.room_id,"seq":0,"ts":now_ms(),"from":"bob","proto":1,"client":{"id":"bob","name":"Bob","ver":"test"}}).to_string())).await.unwrap();
+    let frame = tokio::time::timeout(Duration::from_secs(1), ws.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let Message::Close(Some(frame)) = frame else {
+        panic!("expected close frame")
+    };
+    assert_eq!(u16::from(frame.code), 4001);
+    assert_eq!(frame.reason, "identity mismatch");
+    server.wait_for_clients(&room.room_id, 1).await;
+    observer.sync().await;
+    assert_eq!(observer.count("presence"), 0);
+    assert_eq!(server.room(&room.room_id).lock().unwrap().seq, 1);
+    let bound = RoomInfo {
+        join_token: token,
+        ..room.clone()
+    };
+    let (_, welcome) = server.join("ann", &bound).await;
+    assert_eq!(presence_ids(&welcome), ["ann", "observer"]);
+}
+
+#[tokio::test]
+async fn unbound_token_accepts_any_hello_identity() {
+    let server = Server::start().await;
+    let room = server.create_room().await;
+    let manual = RoomInfo {
+        join_token: sign_token(&room.room_id),
+        ..room
+    };
+    let (_, welcome) = server.join("bob", &manual).await;
+    assert_eq!(presence_ids(&welcome), ["bob"]);
+}
+
+#[tokio::test]
+async fn join_page_renders_valid_link_and_rejects_invalid_or_expired() {
+    let server = Server::start().await;
+    let room = server.create_room().await;
+    let (status, kind, body) = server
+        .http(Method::GET, &format!("/join/{}", room.join_token))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(kind.unwrap().starts_with("text/html"));
+    let html = String::from_utf8(body.to_vec()).unwrap();
+    assert!(html.contains(&format!(
+        "watchtogether://join?room={}&amp;token={}",
+        room.room_id, room.join_token
+    )));
+    assert!(html.contains(&format!(
+        "wt-play --server http://{} --room {} --token {} --file &lt;path&gt;",
+        server.addr, room.room_id, room.join_token
+    )));
+    assert!(html.contains("Copy room id") && html.contains("Copy token"));
+    for token in ["garbage".to_owned(), sign_token_with_ttl(&room.room_id, -1)] {
+        let (status, _, body) = server.http(Method::GET, &format!("/join/{token}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            String::from_utf8(body.to_vec())
+                .unwrap()
+                .contains("this link expired")
+        );
+    }
 }
 
 #[tokio::test]
@@ -824,7 +906,7 @@ async fn kick_closes_every_target_connection_and_removes_presence() {
     let server = Server::start().await;
     let room = server.create_room().await;
     let (mut host, _) = server.join("alice", &room).await;
-    let (mut raw, _) = connect_async(server.ws_url(&room.room_id, &room.join_token))
+    let (mut raw, _) = connect_async(server.ws_url(&room.room_id, &sign_token(&room.room_id)))
         .await
         .unwrap();
     raw.send(Message::text(json!({"v":1,"t":"hello","room":room.room_id,"seq":0,"ts":now_ms(),"from":"guest","proto":1,"client":{"id":"guest","name":"guest","ver":"test"}}).to_string())).await.unwrap();

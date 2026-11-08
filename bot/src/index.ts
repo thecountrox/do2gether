@@ -16,7 +16,7 @@ if (!process.env.DISCORD_TOKEN) {
 
 const token = process.env.DISCORD_TOKEN;
 const appId = process.env.DISCORD_APP_ID;
-const server = process.env.WATCH_SERVER;
+const server = process.env.WATCH_SERVER ?? 'https://watch.141.253.97.15.sslip.io';
 const botToken = process.env.WT_BOT_TOKEN;
 if (!token || !appId || !server || !botToken) throw new Error('Missing Discord bot configuration');
 
@@ -173,7 +173,8 @@ async function handleCommand(interaction: ChatInputCommandInteraction): Promise<
     }
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const minted = await api.token(binding.id, { user_id: target.id, user_name: invitee.displayName });
-    const text = `Room: ${binding.id}\nToken: ${minted.join_token}\nOpen the app, paste both, or run:\nwt-play --server ${server} --room ${binding.id} --token ${minted.join_token} --file <path>`;
+    const joinUrl = `${server.replace(/\/$/, '')}/join/${encodeURIComponent(minted.join_token)}`;
+    const text = `Join the room: ${joinUrl}\n\nOr paste manually:\nRoom: ${binding.id}\nToken: ${minted.join_token}\n\nwt-play --server ${server} --room ${binding.id} --token ${minted.join_token} --file <path>`;
     try {
       await target.send(text);
       await interaction.editReply('Invite sent by DM.');

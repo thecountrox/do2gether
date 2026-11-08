@@ -12,6 +12,7 @@ use support::*;
 use tempfile::tempdir;
 use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
+use wt_server::tokens::sign_token;
 use wt_server::{AppState, Limits, store::Store};
 
 fn open(path: &Path, limits: Limits) -> AppState {
@@ -200,7 +201,7 @@ async fn member_and_queue_caps_refuse_only_new_entries() {
     let (mut alice, _) = server.join("alice", &info).await;
     let (_alice2, welcome) = server.join("alice", &info).await;
     assert_eq!(presence_ids(&welcome), ["alice"]);
-    let (mut bob, _) = connect_async(server.ws_url(&info.room_id, &info.join_token))
+    let (mut bob, _) = connect_async(server.ws_url(&info.room_id, &sign_token(&info.room_id)))
         .await
         .unwrap();
     let hello = json!({"v":1,"t":"hello","room":info.room_id,"seq":0,"ts":now_ms(),"from":"bob",

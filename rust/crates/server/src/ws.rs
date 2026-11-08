@@ -37,17 +37,20 @@ pub(crate) async fn upgrade(
             .map_or("", |(_, v)| v.as_str())
     };
     let room_id = param("room");
-    let target = if verify_token(param("token"), room_id) {
-        state.room(room_id).ok_or(CLOSE_ROOM_NOT_FOUND)
-    } else {
-        Err(CLOSE_INVALID_TOKEN)
-    };
+    let target = verify_token(param("token"), room_id)
+        .ok_or(CLOSE_INVALID_TOKEN)
+        .and_then(|claims| {
+            state
+                .room(room_id)
+                .map(|room| (room, claims.sub))
+                .ok_or(CLOSE_ROOM_NOT_FOUND)
+        });
     upgrade
         .max_message_size(MAX_PAYLOAD_BYTES)
         .max_frame_size(MAX_PAYLOAD_BYTES)
         .on_upgrade(move |socket| async move {
             match target {
-                Ok(room) => run(socket, room).await,
+                Ok((room, expected_sub)) => run(socket, room, expected_sub).await,
                 Err((code, reason)) => refuse(socket, code, reason).await,
             }
         })
@@ -64,7 +67,7 @@ async fn refuse(mut socket: WebSocket, code: u16, reason: &'static str) {
     }
 }
 
-async fn run(mut socket: WebSocket, room: SharedRoom) {
+async fn run(mut socket: WebSocket, room: SharedRoom, expected_sub: Option<String>) {
     let (tx, mut rx) = mpsc::unbounded_channel();
     let (conn, locked) = {
         let mut room = lock(&room);
@@ -73,7 +76,7 @@ async fn run(mut socket: WebSocket, room: SharedRoom) {
         } else if room.locked {
             (None, true)
         } else {
-            (Some(room.attach(tx)), false)
+            (Some(room.attach(tx, expected_sub)), false)
         }
     };
     if locked {
@@ -109,6 +112,10 @@ async fn run(mut socket: WebSocket, room: SharedRoom) {
             Some(data) = rx.recv() => {
                 match data {
                     Outgoing::Text(data) => if socket.send(Message::Text(data.into())).await.is_err() { break; },
+                    Outgoing::IdentityMismatch => {
+                        let _ = socket.send(Message::Close(Some(CloseFrame { code: 4001, reason: "identity mismatch".into() }))).await;
+                        break;
+                    }
                     Outgoing::Expired => {
                         let _ = socket.send(Message::Close(Some(CloseFrame { code: 4006, reason: "room expired".into() }))).await;
                         break;

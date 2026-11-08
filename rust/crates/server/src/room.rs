@@ -27,6 +27,7 @@ pub struct Report {
 
 struct Client {
     tx: UnboundedSender<Outgoing>,
+    expected_sub: Option<String>,
     /// `None` until a valid `hello`.
     user_id: Option<String>,
     report: Option<Report>,
@@ -34,6 +35,7 @@ struct Client {
 
 pub enum Outgoing {
     Text(String),
+    IdentityMismatch,
     Expired,
     Full,
     Kicked,
@@ -166,11 +168,16 @@ impl Room {
             .find_map(|c| c.report.as_ref())
     }
 
-    pub fn attach(&mut self, tx: UnboundedSender<Outgoing>) -> ConnId {
+    pub fn attach(
+        &mut self,
+        tx: UnboundedSender<Outgoing>,
+        expected_sub: Option<String>,
+    ) -> ConnId {
         let conn = self.next_conn;
         self.next_conn += 1;
         let client = Client {
             tx,
+            expected_sub,
             user_id: None,
             report: None,
         };
@@ -320,6 +327,15 @@ impl Room {
         let ClientInfo {
             id: user_id, name, ..
         } = info;
+        if let Some(client) = self.clients.get(&conn)
+            && client
+                .expected_sub
+                .as_deref()
+                .is_some_and(|sub| sub != user_id)
+        {
+            let _ = client.tx.send(Outgoing::IdentityMismatch);
+            return;
+        }
         if self.presence.len() >= self.max_members
             && !self.presence.iter().any(|p| p.member.user_id == user_id)
         {

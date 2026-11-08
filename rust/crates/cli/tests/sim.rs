@@ -14,7 +14,7 @@ use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep, timeout, timeout_at};
 use wt_protocol::Playback;
-use wt_server::tokens::verify_token;
+use wt_server::tokens::{sign_token, verify_token};
 
 const WAIT: Duration = Duration::from_secs(5);
 /// Well inside the server's 5 s close grace, so exiting only once the server drops a refused
@@ -192,6 +192,10 @@ async fn two_simulated_clients_converge_after_play_and_seek() {
     let server = Server::start().await;
     let room = server.create_room().await;
     server.room(&room.room_id).lock().unwrap().controls = "all".into();
+    let room = RoomInfo {
+        join_token: sign_token(&room.room_id),
+        ..room
+    };
     let mut a = WtPlay::join(&server, &room, "ann");
     let mut b = WtPlay::join(&server, &room, "bob");
     let mut users = Vec::new();
@@ -238,7 +242,7 @@ async fn create_prints_a_joinable_room() {
     assert_eq!(word_after(&share, "--server"), url);
     let token = word_after(&share, "--token").to_owned();
     assert!(
-        verify_token(&token, &room_id),
+        verify_token(&token, &room_id).is_some(),
         "share line carries a valid token"
     );
     assert!(
