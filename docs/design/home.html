@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>watch-together — Home window · desktop v2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --board:#0C0613;--plum:#1A0E27;--plum-2:#22133A;--surface:#2B1945;--surface-2:#362056;
+  --line:rgba(255,232,248,.14);--line-2:rgba(255,232,248,.30);
+  --text:#FFF4FB;--muted:#D4C0E2;--dim:#B09BC4;
+  --pink:#FF5FAE;--violet:#8B66FF;--cyan:#62EAF4;--yellow:#FFD45E;--error:#FF9DB3;--err-line:#FF6B8A;
+  --grad:linear-gradient(135deg,#D93583 0%,#A63AC6 52%,#6A45F2 100%);
+  --grad-text:linear-gradient(90deg,#FF8CC8,#B79AFF);
+  --glow:0 12px 30px -10px rgba(226,58,150,.75),0 4px 18px -8px rgba(110,70,240,.6);
+  --font:'M PLUS Rounded 1c',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--board);color:var(--text);min-width:1540px;font-size:15px;
+  background-image:radial-gradient(rgba(255,232,248,.06) 1px,transparent 1px);background-size:22px 22px;-webkit-font-smoothing:antialiased}
+button{font-family:inherit;color:inherit;cursor:pointer;border:0;background:none}
+button:focus-visible{outline:3px solid var(--pink);outline-offset:2px}
+.ic{width:22px;height:22px;flex:none}.ic-sm{width:18px;height:18px;flex:none}
+.board{padding:48px 50px 72px}
+.board-head{display:flex;justify-content:space-between;align-items:flex-end;width:1440px;margin-bottom:28px}
+.board-head h1{font-size:26px;font-weight:900}
+.board-head h1 span{background:var(--grad-text);-webkit-background-clip:text;background-clip:text;color:transparent}
+.board-head p,.meta{font-size:15px;color:var(--muted);font-weight:500;margin-top:4px}
+.meta{text-align:right;color:var(--dim);font-weight:700;line-height:1.6}
+
+/* ---------- window ---------- */
+.win{width:1440px;height:900px;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;background:var(--plum);
+  border:2px solid #3B2752;box-shadow:0 0 0 1px #07030B,0 60px 120px -40px rgba(150,70,230,.5)}
+.titlebar{height:44px;flex:none;display:flex;align-items:center;justify-content:space-between;padding-left:16px;background:#130A1E;border-bottom:2px solid var(--line)}
+.titlebar .t{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:700;color:var(--dim)}
+.titlebar .mk{width:16px;height:16px;border-radius:5px;background:var(--surface-2);border:2px solid var(--line-2)}
+.wc{display:flex}
+.wc button{width:48px;height:44px;display:grid;place-items:center;color:var(--muted)}
+.wc button:hover{background:rgba(255,244,251,.08)}
+.wc .x:hover{background:#C42B4F;color:#fff}
+.wc .ic{width:16px;height:16px}
+
+.stage{flex:1;display:grid;grid-template-columns:repeat(12,1fr);grid-template-rows:1fr 68px;column-gap:24px;padding:0 72px;position:relative;
+  background:radial-gradient(560px 420px at 92% 6%,rgba(217,53,131,.22),transparent 70%),
+  radial-gradient(520px 440px at 4% 92%,rgba(106,69,242,.2),transparent 70%),
+  radial-gradient(rgba(255,232,248,.05) 1px,transparent 1px) 0 0/22px 22px,var(--plum)}
+
+/* brand column */
+.brand{grid-column:2/5;grid-row:1;align-self:center;margin-bottom:28px;position:relative}
+.wordmark{display:flex;align-items:center;gap:12px;font-size:22px;font-weight:900;letter-spacing:-.01em}
+.wordmark i{font-style:normal;color:var(--pink)}
+.mark{width:42px;height:42px;border-radius:14px;background:var(--grad);position:relative;transform:rotate(-8deg);
+  box-shadow:inset 0 2px 0 rgba(255,255,255,.35),0 6px 16px -6px rgba(226,58,150,.8)}
+.mark::before,.mark::after{content:"";position:absolute;top:13px;border-style:solid;border-width:8px 0 8px 12px;border-color:transparent transparent transparent #fff}
+.mark::before{left:10px;opacity:.55}.mark::after{left:17px}
+.spark{position:absolute;width:14px;height:14px;background:var(--yellow);
+  clip-path:polygon(50% 0,61% 39%,100% 50%,61% 61%,50% 100%,39% 61%,0 50%,39% 39%);filter:drop-shadow(0 0 6px rgba(255,212,94,.7))}
+.spark.s2{width:8px;height:8px;background:#FFF0B8}
+.promise{font-size:46px;line-height:1.04;font-weight:900;letter-spacing:-.025em;margin-top:40px}
+.promise span{background:var(--grad-text);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lede{font-size:15px;line-height:1.6;color:var(--muted);font-weight:500;margin-top:14px}
+.steps{list-style:none;margin-top:30px;display:flex;flex-direction:column;gap:6px}
+.steps li{display:flex;gap:14px;align-items:flex-start;padding:10px 10px 10px 0;position:relative}
+.steps li:not(:last-child)::after{content:"";position:absolute;left:19px;top:58px;bottom:-8px;width:2px;border-radius:2px;background:var(--line)}
+.key{width:40px;height:48px;flex:none;border-radius:13px;background:var(--plum-2);border:2px solid var(--line-2);display:grid;place-items:center;
+  font-size:20px;font-weight:900;position:relative;overflow:hidden;box-shadow:inset 0 -4px 0 rgba(0,0,0,.35)}
+.key::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;background:var(--grad)}
+.steps b{display:block;font-size:16px;font-weight:800;margin-top:2px}
+.steps p{font-size:15px;line-height:1.5;color:var(--muted);font-weight:500;margin-top:2px}
+.steps .done .key{color:var(--dim)}
+.steps .done b{color:var(--muted)}
+.tag{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-left:6px}
+.steps .next .key{border-color:var(--pink);box-shadow:inset 0 -4px 0 rgba(0,0,0,.35),0 0 0 4px rgba(255,95,174,.16)}
+.steps .next .tag{color:var(--pink)}
+
+/* footer */
+.foot{grid-column:2/12;grid-row:2;display:flex;align-items:center;justify-content:space-between;border-top:2px solid var(--line)}
+.srv{display:flex;align-items:center;gap:10px;font-size:15px;color:var(--muted);font-weight:700}
+.srv em{font-style:normal;color:var(--dim);font-weight:500}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--cyan);flex:none}
+.dot.p{animation:pulse 2s ease-out 3}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(98,234,244,.6)}80%,100%{box-shadow:0 0 0 7px rgba(98,234,244,0)}}
+.txt-btn{min-height:44px;padding:0 12px;border-radius:14px;font-size:15px;font-weight:800;color:var(--pink);display:inline-flex;align-items:center;gap:6px}
+.txt-btn:hover{background:rgba(255,95,174,.1)}
+.foot-r{display:flex;align-items:center;gap:14px;font-size:15px;color:var(--dim);font-weight:500}
+kbd{font-family:inherit;font-size:13px;font-weight:800;padding:2px 7px;border-radius:7px;background:var(--surface);border:2px solid var(--line-2);border-bottom-width:3px;color:var(--muted)}
+.icon-btn{width:44px;height:44px;border-radius:16px;display:grid;place-items:center;background:var(--surface);border:2px solid var(--line-2);flex:none}
+.icon-btn:hover{background:var(--surface-2)}
+
+/* action card */
+.jcard{grid-column:7/12;grid-row:1;align-self:center;width:504px;margin-bottom:28px;padding:24px 24px 20px;border-radius:28px;background:var(--surface);
+  border:2px solid var(--line-2);box-shadow:0 30px 60px -30px rgba(0,0,0,.85),0 0 0 8px rgba(43,25,69,.35),inset 0 2px 0 rgba(255,255,255,.05)}
+.jhead{display:flex;align-items:center;justify-content:space-between;min-height:44px}
+.jhead h2{font-size:28px;font-weight:900;letter-spacing:-.015em}
+.chip{display:inline-flex;align-items:center;gap:7px;min-height:32px;padding:0 12px;border-radius:999px;font-size:15px;font-weight:700;
+  border:2px solid var(--line-2);background:var(--surface-2);white-space:nowrap}
+.chip.tap{min-height:44px;padding:0 14px}
+.chip.tap .ic-sm{color:var(--muted)}
+.chip-live{color:var(--cyan);border-color:rgba(98,234,244,.45);background:rgba(98,234,244,.1);font-size:13px;font-weight:800;min-height:30px}
+.label{display:block;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:18px 0 8px}
+.field{display:flex;align-items:center;gap:10px;min-height:60px;border-radius:18px;background:var(--plum);border:2px solid var(--line-2);padding:0 6px 0 16px;font-size:15px;font-weight:700}
+.field .val{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.field .val em{font-style:normal;color:var(--dim);font-weight:500}
+.field .icon-btn{background:var(--surface-2)}
+.field.is-error{border-color:var(--err-line)}
+
+.found{margin-top:12px;padding:14px 14px 12px;border-radius:20px;background:var(--plum);border:2px solid var(--line-2)}
+.f1{display:flex;align-items:center;justify-content:space-between}
+.codes{display:flex;align-items:center;gap:4px}
+.k{width:28px;height:36px;border-radius:9px;background:var(--plum-2);border:2px solid var(--line-2);display:grid;place-items:center;font-size:17px;font-weight:900;
+  position:relative;overflow:hidden;box-shadow:inset 0 -3px 0 rgba(0,0,0,.35)}
+.k::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:var(--grad)}
+.dash{width:8px;height:3px;border-radius:2px;background:var(--line-2);margin:0 2px}
+.f2{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:15px;color:var(--muted);font-weight:500}
+.f2 b{color:var(--text);font-weight:800}
+.stack{display:flex}
+.av{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:900;border:2px solid var(--plum);margin-left:-8px}
+.stack .av:first-child{margin-left:0}
+.av-a{background:linear-gradient(135deg,#FF92C9,#D93583);color:#fff}
+.av-b{background:linear-gradient(135deg,#B49BFF,#6A45F2);color:#fff}
+.av-c{background:#FFE6F3;color:#4A1F55}
+.f3{display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:10px;border-top:2px solid var(--line);font-size:15px;color:var(--muted);font-weight:500;white-space:nowrap}
+.f3 svg{color:var(--pink)}
+.f3 b{color:var(--text);font-weight:700;overflow:hidden;text-overflow:ellipsis}
+
+.mine{display:flex;align-items:center;gap:10px;margin-top:10px;min-height:52px;padding:4px 4px 4px 14px;border-radius:16px;border:2px dashed var(--line-2);font-size:15px;color:var(--muted);font-weight:500}
+.mine .ok{width:24px;height:24px;border-radius:50%;background:var(--text);color:var(--plum);display:grid;place-items:center;flex:none}
+.mine .ok svg{width:14px;height:14px}
+.mine b{color:var(--text);font-weight:700}
+.mine .txt-btn{margin-left:auto}
+
+.btn{min-height:60px;width:100%;border-radius:20px;border:2px solid transparent;font:800 17px var(--font);display:flex;align-items:center;justify-content:center;gap:10px;color:#fff;position:relative}
+.btn-primary{margin-top:16px;background:var(--grad);border-color:rgba(255,255,255,.24);
+  box-shadow:inset 0 2px 0 rgba(255,255,255,.35),inset 0 -5px 0 rgba(45,0,70,.35),var(--glow)}
+.btn-primary:active{transform:translateY(3px);box-shadow:inset 0 2px 0 rgba(255,255,255,.25),inset 0 -1px 0 rgba(45,0,70,.35),0 4px 12px -6px rgba(226,58,150,.7)}
+.btn-primary kbd{position:absolute;right:16px;background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.3);color:#fff}
+.btn-off{margin-top:16px;background:var(--surface-2);border:2px dashed var(--line-2);color:var(--muted);cursor:not-allowed;box-shadow:none}
+.secondary{display:flex;align-items:center;gap:14px;margin-top:18px;padding-top:16px;border-top:2px solid var(--line)}
+.btn-ghost{display:inline-flex;align-items:center;gap:8px;min-height:48px;padding:0 18px;border-radius:16px;background:var(--surface-2);border:2px solid var(--line-2);font-size:15px;font-weight:800;white-space:nowrap}
+.btn-ghost:hover{border-color:rgba(255,232,248,.5)}
+.hint{font-size:15px;color:var(--dim);font-weight:500}
+
+/* ---------- states board ---------- */
+.states-h{width:1440px;margin:56px 0 18px;display:flex;align-items:baseline;gap:16px}
+.states-h h2{font-size:20px;font-weight:900}
+.states-h p{font-size:15px;color:var(--muted);font-weight:500}
+.variants{width:1440px;display:grid;grid-template-columns:repeat(4,1fr);gap:24px}
+.panel{padding:20px;border-radius:26px;background:var(--surface);border:2px solid var(--line-2)}
+.panel h3{font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:14px}
+.panel h3 b{color:var(--pink);font-weight:900}
+.panel .field{min-height:56px}
+.alert{margin-top:12px;padding:14px;border-radius:18px;background:rgba(255,107,138,.08);border:2px solid rgba(255,107,138,.45)}
+.alert.neutral{background:var(--plum);border-color:var(--line-2)}
+.alert-t{display:flex;gap:10px;font-size:15px;font-weight:800;line-height:1.4}
+.alert-t svg{color:var(--error);margin-top:1px}
+.alert.neutral .alert-t svg{color:var(--muted)}
+.alert p{font-size:15px;color:var(--muted);font-weight:500;line-height:1.5;margin:6px 0 0 32px}
+.alert .row{display:flex;align-items:center;gap:10px;margin:12px 0 0 32px;flex-wrap:wrap}
+.alert .btn-ghost{background:var(--surface)}
+.err{display:flex;gap:8px;font-size:15px;color:var(--error);font-weight:700;line-height:1.45;margin-top:10px}
+.err svg{margin-top:1px}
+.panel .note{font-size:15px;color:var(--dim);font-weight:500;line-height:1.5;margin-top:12px}
+.panel .btn-primary:first-of-type{margin-top:0}
+.reason{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;font-size:15px;color:var(--muted);font-weight:500}
+.sub-h{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin:18px 0 8px}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-paste" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="5.5" y="5" width="13" height="16" rx="3"/><path d="M9 3.5h6v3H9z"/></g></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M14 3v5h5"/></g><path d="M10 11.5v5.5l4.5-2.75z" fill="currentColor"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 11.5L20 4l-6.5 16-2.6-6.4z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-tune" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 7h9M19 7h1M4 17h3M13 17h7"/><circle cx="16" cy="7" r="2.6"/><circle cx="10" cy="17" r="2.6"/></g></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.1"/></g></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="9"/><rect x="8.5" y="8.5" width="7" height="7" rx="1.5" fill="currentColor" stroke="none"/></g></symbol>
+    <symbol id="i-min" viewBox="0 0 24 24"><path d="M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-max" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  </defs>
+</svg>
+
+<main class="board">
+  <header class="board-head">
+    <div>
+      <h1>watch<span>·</span>together — <span>Home window</span></h1>
+      <p>Desktop launcher. Brand column left (cols 2–4), action card right (cols 7–11), both optically centred.</p>
+    </div>
+    <div class="meta">Windows + Linux · 1440×900 · 12-col, 72px margins, 24px gutters<br>Skin v2 · M PLUS Rounded 1c · Nov 2026</div>
+  </header>
+
+  <!-- ================= WINDOW ================= -->
+  <div class="win">
+    <div class="titlebar">
+      <div class="t"><span class="mk"></span>watch-together</div>
+      <div class="wc">
+        <button aria-label="Minimise"><svg class="ic"><use href="#i-min"/></svg></button>
+        <button aria-label="Maximise"><svg class="ic"><use href="#i-max"/></svg></button>
+        <button class="x" aria-label="Close"><svg class="ic"><use href="#i-close"/></svg></button>
+      </div>
+    </div>
+
+    <div class="stage">
+      <!-- Brand column -->
+      <section class="brand" aria-label="About watch-together">
+        <div class="wordmark"><span class="mark"></span>watch<i>·</i>together</div>
+        <span class="spark" style="top:70px;left:268px"></span>
+        <span class="spark s2" style="top:58px;left:292px"></span>
+        <h1 class="promise">One screen.<br><span>Same moment.</span></h1>
+        <p class="lede">Everyone plays their own copy of the video. We keep play, pause and seek in lockstep — nothing gets uploaded.</p>
+        <ol class="steps">
+          <li class="done"><span class="key">1</span><div><b>Paste the invite<span class="tag">Done</span></b><p>The link from Discord or a friend. It already knows the server.</p></div></li>
+          <li class="done"><span class="key">2</span><div><b>Open your copy<span class="tag">Done</span></b><p>The same file, from your own disk. We check it matches.</p></div></li>
+          <li class="next"><span class="key">3</span><div><b>Press play<span class="tag">Next</span></b><p>Anyone can pause or skip. Everyone follows.</p></div></li>
+        </ol>
+      </section>
+
+      <!-- Action card -->
+      <section class="jcard" aria-labelledby="join-h">
+        <div class="jhead">
+          <h2 id="join-h">Join a room</h2>
+          <button class="chip tap" aria-label="Change display name, currently Rin">as <b>Rin</b><svg class="ic-sm"><use href="#i-pencil"/></svg></button>
+        </div>
+
+        <label class="label" for="invite">Invite link</label>
+        <div class="field" id="invite">
+          <svg class="ic" style="color:var(--pink)"><use href="#i-link"/></svg>
+          <span class="val">192.168.1.20:8787/j/KMR-284<em>?t=8f3a91</em></span>
+          <button class="icon-btn" aria-label="Paste link from clipboard (Ctrl+V)" title="Paste · Ctrl+V"><svg class="ic"><use href="#i-paste"/></svg></button>
+        </div>
+
+        <div class="found" aria-label="Room found">
+          <div class="f1">
+            <div class="codes" aria-label="Room code K M R 2 8 4">
+              <span class="k">K</span><span class="k">M</span><span class="k">R</span><span class="dash"></span><span class="k">2</span><span class="k">8</span><span class="k">4</span>
+            </div>
+            <span class="chip chip-live"><span class="dot p"></span>Live now</span>
+          </div>
+          <div class="f2">
+            <span class="stack"><span class="av av-a">A</span><span class="av av-b">M</span><span class="av av-c">J</span></span>
+            <span><b>Aoi</b> is hosting · Mika and Jun inside</span>
+          </div>
+          <div class="f3">
+            <svg class="ic-sm"><use href="#i-file"/></svg>
+            <b>movie-night_1080p.mkv</b><span>· 24:10 · paused at 12:04</span>
+          </div>
+        </div>
+
+        <div class="mine">
+          <span class="ok"><svg><use href="#i-check"/></svg></span>
+          <span>Your copy <b>matches</b> · 1.4 GB</span>
+          <button class="txt-btn">Change</button>
+        </div>
+
+        <button class="btn btn-primary">Join Aoi's room<svg class="ic"><use href="#i-arrow"/></svg><kbd>Enter</kbd></button>
+
+        <div class="secondary">
+          <button class="btn-ghost"><svg class="ic-sm"><use href="#i-plus"/></svg>Start a room</button>
+          <span class="hint">Host and send your own link.</span>
+        </div>
+      </section>
+
+      <!-- Footer / server row -->
+      <footer class="foot">
+        <div class="srv">
+          <span class="dot"></span>Connected to 192.168.1.20:8787 <em>· 18 ms</em>
+          <button class="txt-btn">Change server</button>
+        </div>
+        <div class="foot-r">
+          <span><kbd>Ctrl</kbd> <kbd>V</kbd> pastes an invite anywhere here</span>
+          <span>v0.9.2</span>
+          <button class="icon-btn" aria-label="Settings"><svg class="ic"><use href="#i-tune"/></svg></button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ================= STATES ================= -->
+  <div class="states-h">
+    <h2>Inline states</h2>
+    <p>Errors replace the room-found card directly under the field. The Join button is hidden until a room is found.</p>
+  </div>
+
+  <section class="variants">
+    <div class="panel">
+      <h3><b>A</b> · Expired link, room alive</h3>
+      <div class="field is-error">
+        <svg class="ic" style="color:var(--error)"><use href="#i-link"/></svg>
+        <span class="val">192.168.1.20:8787/j/KMR-284?t=21c0</span>
+      </div>
+      <div class="alert" role="alert">
+        <div class="alert-t"><svg class="ic"><use href="#i-alert"/></svg>This link expired, but the room is still running</div>
+        <p>Invite links last 6 hours. Aoi can send a fresh one in a second.</p>
+        <div class="row">
+          <span class="chip chip-live"><span class="dot"></span>Live now · 3 inside</span>
+        </div>
+        <div class="row">
+          <button class="btn-ghost"><svg class="ic-sm"><use href="#i-send"/></svg>Ask for a new link</button>
+        </div>
+      </div>
+      <p class="note">Pings Aoi in Discord. We'll fill the field when the new link arrives.</p>
+    </div>
+
+    <div class="panel">
+      <h3><b>B</b> · Room ended</h3>
+      <div class="field">
+        <svg class="ic" style="color:var(--muted)"><use href="#i-link"/></svg>
+        <span class="val">192.168.1.20:8787/j/PLM-731</span>
+      </div>
+      <div class="alert neutral" role="status">
+        <div class="alert-t"><svg class="ic"><use href="#i-stop"/></svg>This room has ended</div>
+        <p>Aoi closed PLM-731 at 23:41, after Friday movie night.</p>
+        <div class="row">
+          <button class="btn-ghost"><svg class="ic-sm"><use href="#i-plus"/></svg>Start a room</button>
+        </div>
+      </div>
+      <p class="note">Calm, not red — nothing went wrong. No live colour: the room is gone.</p>
+    </div>
+
+    <div class="panel">
+      <h3><b>C</b> · Malformed link</h3>
+      <div class="field is-error">
+        <svg class="ic" style="color:var(--error)"><use href="#i-link"/></svg>
+        <span class="val">192.168.1.20:8787/j/KMR-2</span>
+        <button class="icon-btn" aria-label="Paste again"><svg class="ic"><use href="#i-paste"/></svg></button>
+      </div>
+      <p class="err" role="alert"><svg class="ic-sm"><use href="#i-alert"/></svg>That link looks cut off. Invites end in a code like KMR-284 — try copying the whole message again.</p>
+      <p class="note">Checked on paste, before any network call. Field keeps the text so it can be fixed by hand.</p>
+    </div>
+
+    <div class="panel">
+      <h3><b>D</b> · Primary CTA</h3>
+      <div class="sub-h" style="margin-top:0">Enabled · room found, copy matches</div>
+      <button class="btn btn-primary">Join Aoi's room<svg class="ic"><use href="#i-arrow"/></svg></button>
+      <div class="sub-h">Disabled · no copy opened</div>
+      <button class="btn btn-off" aria-disabled="true"><svg class="ic"><use href="#i-file"/></svg>Open your copy to join</button>
+      <div class="reason">
+        <span>Aoi is playing movie-night_1080p.mkv</span>
+        <button class="txt-btn">Choose file…</button>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>
