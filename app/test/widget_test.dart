@@ -1,67 +1,194 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watch_together/home_screen.dart';
+import 'package:watch_together/local_copy.dart';
+import 'package:watch_together/room_api.dart';
+import 'package:watch_together/room_ready.dart';
 import 'package:watch_together/theme.dart';
+import 'package:watch_together/widgets/button.dart';
+import 'package:watch_together/widgets/chrome.dart';
 
-String token(String room) =>
-    '${base64Url.encode(utf8.encode(jsonEncode({'room': room, 'exp': 123456789}))).replaceAll('=', '')}.signature';
+import 'support.dart';
+
+const RoomInfo liveRoom = RoomInfo(
+  roomId: roomCode,
+  hostName: 'Mika',
+  memberCount: 2,
+  memberNames: ['Mika', 'Jo'],
+  itemRef: hostRef,
+  positionMs: 724000,
+  paused: false,
+);
 
 void main() {
-  Future<void> pumpHome(WidgetTester tester) => tester.pumpWidget(
-    MaterialApp(theme: wtTheme(), home: const HomeScreen()),
-  );
+  final clipboard = FakeClipboard();
+  setUp(clipboard.install);
 
-  testWidgets('invalid invite disables join', (tester) async {
-    await pumpHome(tester);
-    await tester.enterText(find.byType(TextField), 'garbage');
+  Future<void> pumpHome(
+    WidgetTester tester, {
+    FakeRoomApi? api,
+    LocalCopy? pick = hostCopy,
+  }) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: wtTheme(),
+        home: HomeScreen(api: api ?? FakeRoomApi(), pickCopy: () async => pick),
+      ),
+    );
     await tester.pump();
-    expect(
-      find.text('Enter a valid invite link or room code and token'),
-      findsOneWidget,
-    );
-    expect(
-      tester
-          .widget<InkWell>(
-            find
-                .ancestor(
-                  of: find.text('Join a room'),
-                  matching: find.byType(InkWell),
-                )
-                .first,
-          )
-          .onTap,
-      isNull,
-    );
-  });
+  }
 
-  for (final invite in [
-    'watchtogether://join?room=room42&token=example',
-    'https://example.com/join/${token('room42')}',
-  ]) {
-    testWidgets('valid invite enables join and shows room: $invite', (
+  Future<void> paste(WidgetTester tester, String invite) async {
+    await tester.enterText(find.byType(TextField), invite);
+    await tester.pump();
+    await tester.pump();
+  }
+
+  WtButton? joinButton(WidgetTester tester, String label) {
+    final found = find.widgetWithText(WtButton, label);
+    return found.evaluate().isEmpty ? null : tester.widget<WtButton>(found);
+  }
+
+  group('Home', () {
+    testWidgets('shows the brand column, steps and server status', (
       tester,
     ) async {
+      useWindow(tester, desktopSizes.first);
       await pumpHome(tester);
-      await tester.enterText(find.byType(TextField), invite);
-      await tester.pump();
-      expect(find.text('● room42'), findsOneWidget);
-      expect(
-        tester
-            .widget<InkWell>(
-              find
-                  .ancestor(
-                    of: find.text('Join a room'),
-                    matching: find.byType(InkWell),
-                  )
-                  .first,
-            )
-            .onTap,
-        isNotNull,
-      );
+      expect(find.text('One screen.'), findsOneWidget);
+      expect(find.text('Same moment.'), findsOneWidget);
+      expect(find.text('Paste the invite'), findsOneWidget);
+      expect(find.text('Open your copy'), findsOneWidget);
+      expect(find.text('Press play'), findsOneWidget);
+      expect(find.text('NEXT'), findsOneWidget);
+      expect(find.textContaining('Connected to '), findsOneWidget);
+      expect(find.textContaining('· 42 ms'), findsOneWidget);
+      expect(find.text('Change server'), findsOneWidget);
+      expect(find.text('Join a room'), findsOneWidget);
+      expect(find.text('Start a room'), findsOneWidget);
+      expect(find.text('Paste an invite to join'), findsOneWidget);
     });
-  }
+
+    testWidgets('malformed link gets a calm inline error', (tester) async {
+      useWindow(tester, desktopSizes.first);
+      await pumpHome(tester);
+      await paste(tester, 'https://example.com/join/garbage');
+      expect(find.textContaining('That link looks cut off'), findsOneWidget);
+      expect(find.text('Paste an invite to join'), findsOneWidget);
+    });
+
+    testWidgets('found room asks for your copy, then enables join', (
+      tester,
+    ) async {
+      useWindow(tester, desktopSizes.first);
+      final api = FakeRoomApi(info: liveRoom);
+      await pumpHome(tester, api: api);
+      await paste(
+        tester,
+        'https://example.com/join/${token(roomCode, exp: inTenMinutes())}',
+      );
+      expect(api.lookups, 1);
+      expect(find.text('Live now'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate((w) => w is WtKeyCaps && w.code == roomCode),
+        findsOneWidget,
+      );
+      expect(find.text('Open your copy to join'), findsOneWidget);
+      expect(joinButton(tester, "Join Mika's room"), isNull);
+
+      await tester.tap(find.text('Choose file…'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Open your copy to join'), findsNothing);
+      expect(joinButton(tester, "Join Mika's room")?.onPressed, isNotNull);
+      expect(
+        find.textContaining('Your copy matches', findRichText: true),
+        findsOneWidget,
+      );
+      expect(find.text('DONE'), findsNWidgets(2));
+    });
+
+    testWidgets('paste button reads the clipboard', (tester) async {
+      useWindow(tester, desktopSizes.first);
+      clipboard.text =
+          ' https://example.com/join/${token(roomCode, exp: inTenMinutes())}\n';
+      await pumpHome(tester, api: FakeRoomApi(info: liveRoom));
+      await tester.tap(find.byTooltip('Paste'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Live now'), findsOneWidget);
+    });
+
+    testWidgets('expired link to a live room offers to ask for a new one', (
+      tester,
+    ) async {
+      useWindow(tester, desktopSizes.first);
+      await pumpHome(tester, api: FakeRoomApi(info: liveRoom));
+      await paste(tester, 'https://example.com/join/${token(roomCode)}');
+      expect(
+        find.text('This link expired, but the room is still running'),
+        findsOneWidget,
+      );
+      expect(find.text('Live now · 2 inside'), findsOneWidget);
+      await tester.tap(find.text('Ask for a new link'));
+      await tester.pump();
+      expect(clipboard.text, contains(roomCode));
+    });
+
+    testWidgets('ended room says so', (tester) async {
+      useWindow(tester, desktopSizes.first);
+      await pumpHome(tester, api: FakeRoomApi());
+      await paste(
+        tester,
+        'https://example.com/join/${token(roomCode, exp: inTenMinutes())}',
+      );
+      expect(find.text('This room has ended'), findsOneWidget);
+      expect(find.text('Start a room'), findsNWidgets(2));
+    });
+
+    testWidgets('lookup failure fails open', (tester) async {
+      useWindow(tester, desktopSizes.first);
+      await pumpHome(tester, api: FakeRoomApi(fail: true));
+      await paste(
+        tester,
+        'https://example.com/join/${token(roomCode, exp: inTenMinutes())}',
+      );
+      expect(find.text("Couldn't check"), findsOneWidget);
+      await tester.tap(find.text('Choose file…'));
+      await tester.pump();
+      await tester.pump();
+      expect(joinButton(tester, 'Join room')?.onPressed, isNotNull);
+    });
+
+    for (final size in desktopSizes) {
+      final label = '${size.width.toInt()}x${size.height.toInt()}';
+      testWidgets('fits $label empty', (tester) async {
+        useWindow(tester, size);
+        await pumpHome(tester);
+        expect(tester.takeException(), isNull);
+      });
+
+      testWidgets('fits $label with a found room and a copy', (tester) async {
+        useWindow(tester, size);
+        await pumpHome(tester, api: FakeRoomApi(info: liveRoom));
+        await paste(
+          tester,
+          'https://example.com/join/${token(roomCode, exp: inTenMinutes())}',
+        );
+        await tester.tap(find.text('Choose file…'));
+        await tester.pump();
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+      });
+
+      testWidgets('fits $label with an expired link', (tester) async {
+        useWindow(tester, size);
+        await pumpHome(tester, api: FakeRoomApi(info: liveRoom));
+        await paste(tester, 'https://example.com/join/${token(roomCode)}');
+        expect(tester.takeException(), isNull);
+      });
+    }
+  });
 
   test('server URL accepts http and https only', () {
     expect(validateServerUrl(defaultServerUrl), isNull);
@@ -69,21 +196,109 @@ void main() {
     expect(validateServerUrl('ws://127.0.0.1:8787'), isNotNull);
   });
 
-  for (final size in [const Size(360, 800), const Size(1280, 800)]) {
-    testWidgets('Home fits ${size.width.toInt()}×${size.height.toInt()}', (
-      tester,
-    ) async {
-      tester.view.devicePixelRatio = 1;
-      tester.view.physicalSize = size;
-      addTearDown(() {
-        tester.view.resetPhysicalSize();
-        tester.view.resetDevicePixelRatio();
-      });
-      await pumpHome(tester);
-      expect(find.text('watch together'), findsOneWidget);
-      expect(find.text('Join a room'), findsOneWidget);
-      expect(find.text('Start a room'), findsOneWidget);
-      expect(tester.takeException(), isNull);
+  group('Room ready dialog', () {
+    Future<Future<bool?>> open(
+      WidgetTester tester, {
+      LocalCopy? copy,
+      FakeRoomApi? api,
+    }) async {
+      late Future<bool?> result;
+      final room = await FakeRoomApi().create(Uri.parse(defaultServerUrl));
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: wtTheme(),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () => result = showRoomReady(
+                    context,
+                    server: Uri.parse(defaultServerUrl),
+                    created: room,
+                    name: 'Sam',
+                    copy: copy,
+                    api: api ?? FakeRoomApi(),
+                    pickCopy: () async => hostCopy,
+                    onCopy: (_) {},
+                  ),
+                  child: const Text('open'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      return result;
+    }
+
+    testWidgets('shows code, link, readiness and footer', (tester) async {
+      useWindow(tester, desktopSizes.first);
+      await open(tester);
+      expect(find.text('read it out — no 0/O or 1/I'), findsOneWidget);
+      expect(find.text('Copy'), findsOneWidget);
+      expect(find.text('No file yet'), findsOneWidget);
+      expect(find.text('Invited'), findsOneWidget);
+      expect(find.text('Nudge'), findsOneWidget);
+      expect(find.text('Choose your copy'), findsOneWidget);
+      expect(find.text('Enter room'), findsOneWidget);
+      expect(find.text('Share'), findsOneWidget);
+      expect(find.textContaining('Code expires in 9:5'), findsOneWidget);
+      expect(find.textContaining('Nothing is uploaded'), findsNothing);
     });
-  }
+
+    testWidgets('copy flips to Copied for 1.5 s', (tester) async {
+      useWindow(tester, desktopSizes.first);
+      await open(tester);
+      await tester.tap(find.text('Copy'));
+      await tester.pump();
+      expect(find.text('Copied'), findsOneWidget);
+      expect(clipboard.text, contains('/join/'));
+      await tester.pump(const Duration(milliseconds: 1600));
+      expect(find.text('Copy'), findsOneWidget);
+    });
+
+    testWidgets('your copy turns you Ready; joiners appear', (tester) async {
+      useWindow(tester, desktopSizes.first);
+      final api = FakeRoomApi(
+        info: const RoomInfo(
+          roomId: roomCode,
+          hostName: 'Sam',
+          memberCount: 2,
+          memberNames: ['Sam', 'Jo'],
+        ),
+      );
+      await open(tester, api: api);
+      await tester.tap(find.text('Choose your copy'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Ready'), findsOneWidget);
+      expect(find.textContaining('Plays from your disk'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+      expect(find.text('Jo'), findsOneWidget);
+      expect(find.text('Joined'), findsOneWidget);
+    });
+
+    testWidgets('Enter room resolves true', (tester) async {
+      useWindow(tester, desktopSizes.first);
+      final result = await open(tester, copy: hostCopy);
+      await tester.tap(find.text('Enter room'));
+      await tester.pump();
+      expect(await result, isTrue);
+    });
+
+    for (final size in desktopSizes) {
+      testWidgets('fits ${size.width.toInt()}x${size.height.toInt()}', (
+        tester,
+      ) async {
+        useWindow(tester, size);
+        await open(tester, copy: hostCopy);
+        expect(find.text('Enter room'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  });
 }

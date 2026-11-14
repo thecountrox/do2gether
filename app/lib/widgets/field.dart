@@ -2,20 +2,29 @@ import 'package:flutter/material.dart';
 
 import '../theme.dart';
 
+/// Board `.field`: plum well, 2px line, leading icon, optional trailing action.
 class WtField extends StatefulWidget {
   const WtField({
     super.key,
     required this.controller,
     this.hint,
     this.icon,
+    this.iconColor = WtColors.pink,
+    this.trailing,
     this.readOnly = false,
+    this.autofocus = false,
+    this.height = 60,
     this.onChanged,
     this.onSubmitted,
   });
   final TextEditingController controller;
   final String? hint;
   final IconData? icon;
+  final Color iconColor;
+  final Widget? trailing;
   final bool readOnly;
+  final bool autofocus;
+  final double height;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
 
@@ -24,61 +33,62 @@ class WtField extends StatefulWidget {
 }
 
 class _WtFieldState extends State<WtField> {
-  bool focused = false;
+  bool _focused = false;
 
   @override
   Widget build(BuildContext context) => Focus(
-    onFocusChange: (value) => setState(() => focused = value),
-    child: Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          const BoxShadow(
-            color: Color(0x5509001A),
-            blurRadius: 8,
-            offset: Offset(0, 3),
-            blurStyle: BlurStyle.inner,
-          ),
-          if (focused)
-            BoxShadow(
-              color: WtColors.cyan.withValues(alpha: 0.6),
-              blurRadius: 2,
-              spreadRadius: 2,
-            ),
-        ],
+    canRequestFocus: false,
+    skipTraversal: true,
+    onFocusChange: (value) => setState(() => _focused = value),
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 120),
+      constraints: BoxConstraints(minHeight: widget.height),
+      padding: EdgeInsets.only(
+        left: 16,
+        right: widget.trailing == null ? 16 : 6,
       ),
-      child: TextField(
-        controller: widget.controller,
-        readOnly: widget.readOnly,
-        onChanged: widget.onChanged,
-        onSubmitted: widget.onSubmitted,
-        style: const TextStyle(color: WtColors.text, fontSize: 15),
-        decoration: InputDecoration(
-          hintText: widget.hint,
-          hintStyle: const TextStyle(color: WtColors.muted),
-          prefixIcon: widget.icon == null
-              ? null
-              : Icon(widget.icon, color: WtColors.muted, size: 20),
-          filled: true,
-          fillColor: WtColors.surface2,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 18,
-            vertical: 18,
-          ),
-          constraints: const BoxConstraints(minHeight: 56),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(20),
-            borderSide: const BorderSide(color: WtColors.stroke, width: 2),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(20),
-            borderSide: BorderSide(
-              color: WtColors.cyan.withValues(alpha: 0.6),
-              width: 2,
+      decoration: BoxDecoration(
+        color: WtColors.plum,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: _focused ? WtColors.cyan : WtColors.line,
+          width: 2,
+        ),
+      ),
+      child: Row(
+        children: [
+          if (widget.icon != null) ...[
+            Icon(widget.icon, size: 22, color: widget.iconColor),
+            const SizedBox(width: 10),
+          ],
+          Expanded(
+            child: TextField(
+              controller: widget.controller,
+              readOnly: widget.readOnly,
+              autofocus: widget.autofocus,
+              onChanged: widget.onChanged,
+              onSubmitted: widget.onSubmitted,
+              maxLines: 1,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: widget.readOnly ? WtColors.tx3 : WtColors.text,
+              ),
+              decoration: InputDecoration.collapsed(
+                hintText: widget.hint,
+                hintStyle: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                  color: WtColors.tx3,
+                ),
+              ),
             ),
           ),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(20)),
-        ),
+          if (widget.trailing != null) ...[
+            const SizedBox(width: 10),
+            widget.trailing!,
+          ],
+        ],
       ),
     ),
   );

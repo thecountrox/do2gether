@@ -18,6 +18,10 @@ namespace {
 
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 
+/// Smallest client area the desktop layout supports, in logical pixels.
+constexpr int kMinClientWidth = 1100;
+constexpr int kMinClientHeight = 720;
+
 /// Registry key for app theme preference.
 ///
 /// A value of 0 indicates apps should use dark mode. A non-zero or missing
@@ -195,6 +199,17 @@ Win32Window::MessageHandler(HWND hwnd,
       SetWindowPos(hwnd, nullptr, newRectSize->left, newRectSize->top, newWidth,
                    newHeight, SWP_NOZORDER | SWP_NOACTIVATE);
 
+      return 0;
+    }
+    case WM_GETMINMAXINFO: {
+      // Minimum client area 1100x720 logical pixels, converted to a window size.
+      double scale_factor = FlutterDesktopGetDpiForHWND(hwnd) / 96.0;
+      RECT frame = {0, 0, Scale(kMinClientWidth, scale_factor),
+                    Scale(kMinClientHeight, scale_factor)};
+      AdjustWindowRect(&frame, WS_OVERLAPPEDWINDOW, FALSE);
+      auto info = reinterpret_cast<MINMAXINFO*>(lparam);
+      info->ptMinTrackSize.x = frame.right - frame.left;
+      info->ptMinTrackSize.y = frame.bottom - frame.top;
       return 0;
     }
     case WM_SIZE: {

@@ -52,7 +52,11 @@ static void my_application_activate(GApplication* application) {
     gtk_window_set_title(window, "watch_together");
   }
 
-  gtk_window_set_default_size(window, 1280, 720);
+  gtk_window_set_default_size(window, 1440, 900);
+  GdkGeometry min_size = {};
+  min_size.min_width = 1100;
+  min_size.min_height = 720;
+  gtk_window_set_geometry_hints(window, nullptr, &min_size, GDK_HINT_MIN_SIZE);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(

@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
 
-import '../protocol.dart';
 import '../theme.dart';
 
-Color avatarColor(String id) {
+/// Board avatars: `.av-a` pink, `.av-b` violet, `.av-c` light.
+enum _Swatch { pink, violet, light }
+
+_Swatch _swatch(String id) {
   var hash = 0;
   for (final c in id.codeUnits) {
     hash = (hash * 31 + c) & 0x7fffffff;
   }
-  return [WtColors.pink, WtColors.cyan, WtColors.violet][hash % 3];
+  return _Swatch.values[hash % 3];
 }
 
 class WtAvatar extends StatelessWidget {
@@ -17,68 +19,122 @@ class WtAvatar extends StatelessWidget {
     required this.id,
     required this.name,
     this.size = 36,
+    this.ring = WtColors.plum2,
+    this.muted = false,
   });
   final String id;
   final String name;
   final double size;
+  final Color ring;
+
+  /// Board `.av-d`: someone not ready yet.
+  final bool muted;
 
   @override
-  Widget build(BuildContext context) => Tooltip(
-    message: name,
-    child: Container(
+  Widget build(BuildContext context) {
+    final swatch = _swatch(id);
+    return Container(
       width: size,
       height: size,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        border: Border.all(color: WtColors.text, width: 2),
-        gradient: LinearGradient(
-          colors: switch (avatarColor(id)) {
-            WtColors.pink => [WtColors.pink, WtColors.star],
-            WtColors.cyan => [WtColors.cyan, WtColors.violet],
-            _ => [WtColors.violet, WtColors.pink],
-          },
-        ),
+        border: Border.all(color: ring, width: 2),
+        color: muted
+            ? WtColors.s2
+            : swatch == _Swatch.light
+            ? const Color(0xFFFFE6F3)
+            : null,
+        gradient: muted
+            ? null
+            : switch (swatch) {
+                _Swatch.pink => const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFFFF92C9), Color(0xFFD93583)],
+                ),
+                _Swatch.violet => const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFFB49BFF), Color(0xFF6A45F2)],
+                ),
+                _Swatch.light => null,
+              },
       ),
       child: Text(
-        name.isEmpty ? '?' : name[0].toUpperCase(),
+        name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase(),
         style: TextStyle(
-          color: WtColors.text,
+          color: muted
+              ? WtColors.tx3
+              : swatch == _Swatch.light
+              ? const Color(0xFF4A1F55)
+              : Colors.white,
           fontSize: size * 0.4,
+          height: 1,
           fontWeight: FontWeight.w900,
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
+/// Overlapping avatars, board `.stack`; extra people collapse into `+N`.
 class WtAvatarStack extends StatelessWidget {
-  const WtAvatarStack({super.key, required this.members});
-  final List<Member> members;
+  const WtAvatarStack({
+    super.key,
+    required this.people,
+    this.extra = 0,
+    this.size = 30,
+    this.ring = WtColors.plum,
+  });
+
+  /// `(id, name)` pairs.
+  final List<(String, String)> people;
+  final int extra;
+  final double size;
+  final Color ring;
 
   @override
   Widget build(BuildContext context) {
-    final shown = members.take(4).toList();
-    if (shown.isEmpty) {
-      return const Icon(Icons.people_outline, color: WtColors.muted);
-    }
+    final shown = people.take(3).toList();
+    final more = extra + people.length - shown.length;
+    final count = shown.length + (more > 0 ? 1 : 0);
+    if (count == 0) return const SizedBox.shrink();
+    final step = size - 8;
     return SizedBox(
-      width: 36 + (shown.length - 1) * 24.0,
-      height: 38,
+      width: size + (count - 1) * step,
+      height: size,
       child: Stack(
         children: [
           for (var i = 0; i < shown.length; i++)
             Positioned(
-              left: i * 24.0,
+              left: i * step,
+              child: WtAvatar(
+                id: shown[i].$1,
+                name: shown[i].$2,
+                size: size,
+                ring: ring,
+              ),
+            ),
+          if (more > 0)
+            Positioned(
+              left: shown.length * step,
               child: Container(
-                padding: const EdgeInsets.all(1),
-                decoration: const BoxDecoration(
+                width: size,
+                height: size,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: WtColors.bg,
+                  color: WtColors.s2,
+                  border: Border.all(color: ring, width: 2),
                 ),
-                child: WtAvatar(
-                  id: shown[i].userId,
-                  name: shown[i].name ?? shown[i].userId,
+                child: Text(
+                  '+$more',
+                  style: TextStyle(
+                    fontSize: size * 0.36,
+                    fontWeight: FontWeight.w900,
+                    color: WtColors.tx2,
+                  ),
                 ),
               ),
             ),
