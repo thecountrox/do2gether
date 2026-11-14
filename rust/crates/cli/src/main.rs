@@ -8,6 +8,7 @@ mod mpv;
 mod net;
 mod player;
 mod session;
+mod tokens;
 mod wire;
 
 /// The server's test harness, for its schema validator.
@@ -28,6 +29,7 @@ use crate::mpv::Mpv;
 use crate::net::ServerUrl;
 use crate::player::{Player, Sim};
 use crate::session::Session;
+use crate::tokens as token_claims;
 use crate::wire::Outbox;
 
 #[tokio::main(flavor = "current_thread")]
@@ -91,7 +93,10 @@ async fn run(args: Args) -> Result<(), String> {
     };
     let (sink, stream) = ws.split();
 
-    let user_id = host_id.unwrap_or_else(user_id);
+    // User-bound tokens carry `sub`; use it so a bot-minted invite authenticates as that user.
+    let user_id = host_id
+        .or_else(|| token_claims::subject(&token))
+        .unwrap_or_else(user_id);
     println!("user: {user_id} name: {}", args.name);
     let out = Outbox::new(&room, &user_id);
     let session = Session::new(sink, out, Clock::new(), player, item_ref);
