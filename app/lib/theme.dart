@@ -70,6 +70,10 @@ abstract final class WtSpace {
   static const double rail = 16;
 }
 
+/// Below this window width Home stacks into one column and Room hides its rail behind a button.
+/// Tiling compositors (Hyprland) ignore the runner's min-size hint, so this has to hold.
+const double wtCompactWidth = 1024;
+
 ThemeData wtTheme() => ThemeData(
   brightness: Brightness.dark,
   useMaterial3: true,

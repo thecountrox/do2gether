@@ -18,6 +18,8 @@ import 'widgets/identity.dart';
 
 const String defaultServerUrl = 'https://watch.141.253.97.15.sslip.io';
 
+const Key homeCardKey = ValueKey('home-card');
+
 String? validateServerUrl(String? value) {
   final uri = Uri.tryParse((value ?? '').trim());
   return uri != null &&
@@ -28,7 +30,15 @@ String? validateServerUrl(String? value) {
 }
 
 /// Where the pasted invite stands after parsing and `GET /rooms/{id}`.
-enum InviteState { empty, malformed, checking, found, unchecked, expired, ended }
+enum InviteState {
+  empty,
+  malformed,
+  checking,
+  found,
+  unchecked,
+  expired,
+  ended,
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -140,9 +150,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (copy != null && mounted) setState(() => _copy = copy);
     } on Object catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Couldn't open that file: $e")),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Couldn't open that file: $e")));
       }
     } finally {
       if (mounted) setState(() => _picking = false);
@@ -274,41 +284,56 @@ class _HomeScreenState extends State<HomeScreen> {
       autofocus: true,
       onKeyEvent: _onKey,
       child: WtBackdrop(
-          child: LayoutBuilder(
-            builder: (context, box) {
-              final inner = box.maxWidth - 2 * WtSpace.window;
-              final gap = ((inner - 320 - 504) / 3).clamp(48.0, 144.0);
-              final brandHeight = (box.maxHeight - 2 * WtSpace.window).clamp(
-                0.0,
-                640.0,
-              );
-              return SingleChildScrollView(
-                padding: const EdgeInsets.all(WtSpace.window),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    minHeight: box.maxHeight - 2 * WtSpace.window,
-                  ),
-                  child: Center(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          width: 320,
-                          height: brandHeight,
-                          child: _Brand(
-                            next: _nextStep,
-                            status: _statusRow(),
-                          ),
-                        ),
-                        SizedBox(width: gap),
-                        SizedBox(width: 504, child: _card()),
-                      ],
-                    ),
-                  ),
+        child: LayoutBuilder(
+          builder: (context, box) {
+            final inner = box.maxWidth - 2 * WtSpace.window;
+            final gap = ((inner - 320 - 504) / 3).clamp(48.0, 144.0);
+            final brandHeight = (box.maxHeight - 2 * WtSpace.window).clamp(
+              0.0,
+              640.0,
+            );
+            final compact = box.maxWidth < wtCompactWidth;
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(WtSpace.window),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: box.maxHeight - 2 * WtSpace.window,
                 ),
-              );
-            },
-          ),
+                child: Center(
+                  child: compact
+                      ? Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _Brand(
+                              next: _nextStep,
+                              status: _statusRow(),
+                              compact: true,
+                            ),
+                            const SizedBox(height: 32),
+                            _card(),
+                          ],
+                        )
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 320,
+                              height: brandHeight,
+                              child: _Brand(
+                                next: _nextStep,
+                                status: _statusRow(),
+                              ),
+                            ),
+                            SizedBox(width: gap),
+                            SizedBox(width: 504, child: _card()),
+                          ],
+                        ),
+                ),
+              ),
+            );
+          },
+        ),
       ),
     ),
   );
@@ -354,17 +379,18 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ),
-        const SizedBox(width: 4),
-        WtTextButton(
+        const SizedBox(width: 8),
+        _GhostChip(
           label: 'Change server',
-          compact: true,
-          onPressed: _changeServer,
+          icon: Icons.dns_outlined,
+          onTap: _changeServer,
         ),
       ],
     );
   }
 
   Widget _card() => Container(
+    key: homeCardKey,
     padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
     decoration: BoxDecoration(
       color: WtColors.s1,
@@ -398,12 +424,15 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(height: 18),
         WtLabel(
           'Invite link',
-          trailing: const Text(
-            'Ctrl V to paste',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: WtColors.tx3,
+          trailing: const Padding(
+            padding: EdgeInsets.only(right: 12),
+            child: Text(
+              'Ctrl V to paste',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: WtColors.tx3,
+              ),
             ),
           ),
         ),
@@ -531,9 +560,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ];
-      case InviteState.checking ||
-          InviteState.found ||
-          InviteState.unchecked:
+      case InviteState.checking || InviteState.found || InviteState.unchecked:
         return [
           _FoundCard(room: link!.room, state: _state, info: _info, copy: _copy),
           if (_copy != null) ...[
@@ -635,11 +662,18 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _Brand extends StatelessWidget {
-  const _Brand({required this.next, required this.status});
+  const _Brand({
+    required this.next,
+    required this.status,
+    this.compact = false,
+  });
 
   /// Index of the step to do next; 0 paste, 1 open copy, 2 play.
   final int next;
   final Widget status;
+
+  /// Narrow window: sized to content, steps folded behind `How it works`.
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -649,64 +683,157 @@ class _Brand extends StatelessWidget {
         : i == next
         ? _StepState.next
         : _StepState.todo;
+    const mark = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [WtWordmark(), SizedBox(width: 6), WtSpark()],
+    );
+    final headline = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('One screen.', style: display),
+        WtGradientText('Same moment.', style: display),
+        const SizedBox(height: 16),
+        const Text(
+          'Everyone plays their own copy, in step. '
+          'It plays from your disk — this app only keeps time.',
+          style: TextStyle(
+            fontSize: 15,
+            height: 1.5,
+            fontWeight: FontWeight.w500,
+            color: WtColors.tx3,
+          ),
+        ),
+      ],
+    );
+    final steps = Column(
+      children: [
+        _Step(
+          n: 1,
+          title: 'Paste the invite',
+          body:
+              'The link from Discord or a friend. It already knows the server.',
+          state: state(0),
+        ),
+        _Step(
+          n: 2,
+          title: 'Open your copy',
+          body: 'The same file, from your own disk. We check it matches.',
+          state: state(1),
+        ),
+        _Step(
+          n: 3,
+          title: 'Press play',
+          body: 'Anyone can pause or skip. Everyone follows.',
+          state: state(2),
+          last: true,
+        ),
+      ],
+    );
+    if (compact) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          mark,
+          const SizedBox(height: 24),
+          headline,
+          const SizedBox(height: 16),
+          _Disclosure(label: 'How it works', child: steps),
+          const SizedBox(height: 16),
+          status,
+        ],
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        const Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            WtWordmark(),
-            SizedBox(width: 6),
-            WtSpark(),
-          ],
-        ),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('One screen.', style: display),
-            WtGradientText('Same moment.', style: display),
-            const SizedBox(height: 16),
-            const Text(
-              'Everyone plays their own copy, in step. '
-              'It plays from your disk — this app only keeps time.',
-              style: TextStyle(
-                fontSize: 15,
-                height: 1.5,
-                fontWeight: FontWeight.w500,
-                color: WtColors.tx3,
-              ),
-            ),
-          ],
-        ),
-        Column(
-          children: [
-            _Step(
-              n: 1,
-              title: 'Paste the invite',
-              body:
-                  'The link from Discord or a friend. It already knows the server.',
-              state: state(0),
-            ),
-            _Step(
-              n: 2,
-              title: 'Open your copy',
-              body: 'The same file, from your own disk. We check it matches.',
-              state: state(1),
-            ),
-            _Step(
-              n: 3,
-              title: 'Press play',
-              body: 'Anyone can pause or skip. Everyone follows.',
-              state: state(2),
-              last: true,
-            ),
-          ],
-        ),
-        status,
-      ],
+      children: [mark, headline, steps, status],
     );
   }
+}
+
+/// A ghost chip that shows or hides [child] below it.
+class _Disclosure extends StatefulWidget {
+  const _Disclosure({required this.label, required this.child});
+  final String label;
+  final Widget child;
+
+  @override
+  State<_Disclosure> createState() => _DisclosureState();
+}
+
+class _DisclosureState extends State<_Disclosure> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Semantics(
+        expanded: _open,
+        child: _GhostChip(
+          label: widget.label,
+          icon: _open ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+          onTap: () => setState(() => _open = !_open),
+        ),
+      ),
+      AnimatedSize(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+        alignment: Alignment.topLeft,
+        child: _open
+            ? Padding(
+                padding: const EdgeInsets.only(top: 16),
+                child: widget.child,
+              )
+            : const SizedBox(width: double.infinity),
+      ),
+    ],
+  );
+}
+
+/// A small secondary control: plum chip, 2px line border, pill radius.
+class _GhostChip extends StatelessWidget {
+  const _GhostChip({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => WtTap(
+    onTap: onTap,
+    radius: WtRadius.pill,
+    child: Container(
+      height: 32,
+      padding: const EdgeInsets.only(left: 10, right: 12),
+      decoration: BoxDecoration(
+        color: WtColors.s1,
+        borderRadius: BorderRadius.circular(WtRadius.pill),
+        border: Border.all(color: WtColors.line, width: 2),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: WtColors.tx2),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            maxLines: 1,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: WtColors.text,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 enum _StepState { done, next, todo }
@@ -758,7 +885,11 @@ class _Step extends StatelessWidget {
             ),
             Center(
               child: done
-                  ? const Icon(Icons.check_rounded, size: 20, color: WtColors.text)
+                  ? const Icon(
+                      Icons.check_rounded,
+                      size: 20,
+                      color: WtColors.text,
+                    )
                   : Text(
                       '$n',
                       style: const TextStyle(
@@ -784,9 +915,7 @@ class _Step extends StatelessWidget {
                 children: [
                   key,
                   if (!last)
-                    Expanded(
-                      child: Container(width: 2, color: WtColors.line),
-                    ),
+                    Expanded(child: Container(width: 2, color: WtColors.line)),
                 ],
               ),
             ),
@@ -813,13 +942,24 @@ class _Step extends StatelessWidget {
                         ),
                         if (state != _StepState.todo) ...[
                           const SizedBox(width: 8),
-                          Text(
-                            done ? 'DONE' : 'NEXT',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 0.9,
-                              color: next ? WtColors.pink : WtColors.tx3,
+                          Container(
+                            padding: const EdgeInsets.fromLTRB(7, 1, 6, 1),
+                            decoration: BoxDecoration(
+                              color: next
+                                  ? const Color(0x29FF5FAE)
+                                  : const Color(0x14FFE8F8),
+                              borderRadius: BorderRadius.circular(
+                                WtRadius.pill,
+                              ),
+                            ),
+                            child: Text(
+                              done ? 'DONE' : 'NEXT',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0.9,
+                                color: next ? WtColors.pink : WtColors.tx3,
+                              ),
                             ),
                           ),
                         ],
@@ -1157,26 +1297,24 @@ class _CalmLine extends StatelessWidget {
   final IconData icon;
   final String text;
 
+  static const _style = TextStyle(
+    fontSize: 13,
+    height: 1.45,
+    fontWeight: FontWeight.w600,
+    color: WtColors.tx3,
+  );
+
   @override
   Widget build(BuildContext context) => Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Padding(
-        padding: const EdgeInsets.only(top: 1),
-        child: Icon(icon, size: 18, color: WtColors.tx3),
+      // Centred on the first line box, however many lines the text wraps to.
+      SizedBox(
+        height: _style.fontSize! * _style.height!,
+        child: Center(child: Icon(icon, size: 18, color: WtColors.tx3)),
       ),
       const SizedBox(width: 8),
-      Expanded(
-        child: Text(
-          text,
-          style: const TextStyle(
-            fontSize: 13,
-            height: 1.45,
-            fontWeight: FontWeight.w600,
-            color: WtColors.tx3,
-          ),
-        ),
-      ),
+      Expanded(child: Text(text, style: _style)),
     ],
   );
 }

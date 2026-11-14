@@ -39,6 +39,7 @@ export interface Client {
 
 export interface Room {
   id: string;
+  hostId?: string;
   rev: number;
   seq: number;
   playback: Playback | null;

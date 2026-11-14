@@ -47,7 +47,13 @@ RoomViewData video({
 const RoomViewData empty = RoomViewData(
   room: roomCode,
   people: [
-    RoomPerson(id: 'me', name: 'Sam', you: true, host: true, state: PersonState.noFile),
+    RoomPerson(
+      id: 'me',
+      name: 'Sam',
+      you: true,
+      host: true,
+      state: PersonState.noFile,
+    ),
   ],
 );
 
@@ -89,7 +95,9 @@ void main() {
   }
 
   WtTap tapFor(WidgetTester tester, String tooltip) => tester.widget<WtTap>(
-    find.ancestor(of: find.byTooltip(tooltip), matching: find.byType(WtTap)).first,
+    find
+        .ancestor(of: find.byTooltip(tooltip), matching: find.byType(WtTap))
+        .first,
   );
 
   group('ready pill', () {
@@ -120,6 +128,104 @@ void main() {
       expect(find.text('All 3 in sync'), findsOneWidget);
       expect(find.textContaining('ready'), findsNothing);
     });
+
+    testWidgets('default people are ready; one without a file is not', (
+      tester,
+    ) async {
+      useWindow(tester, desktopSizes.first);
+      const fresh = [
+        RoomPerson(id: 'mika', name: 'Mika', host: true),
+        RoomPerson(id: 'me', name: 'Sam', you: true),
+        RoomPerson(id: 'jo', name: 'Jo'),
+        RoomPerson(id: 'al', name: 'Al'),
+      ];
+      await pumpRoom(tester, video(people: fresh));
+      expect(find.text('All 4 in sync'), findsOneWidget);
+
+      await pumpRoom(
+        tester,
+        video(
+          people: [
+            ...fresh.take(3),
+            const RoomPerson(id: 'al', name: 'Al', state: PersonState.noFile),
+          ],
+        ),
+      );
+      expect(find.text('3 of 4 ready'), findsOneWidget);
+    });
+
+    test('only drift beyond the seek threshold counts as not ready', () {
+      RoomPerson drifting(double ms) => RoomPerson(
+        id: 'x',
+        name: 'X',
+        state: PersonState.drifting,
+        driftMs: ms,
+      );
+      expect(const RoomPerson(id: 'x', name: 'X').ready, isTrue);
+      expect(drifting(-1200).ready, isTrue);
+      expect(drifting(2300).ready, isFalse);
+      for (final state in [
+        PersonState.noFile,
+        PersonState.buffering,
+        PersonState.reconnecting,
+      ]) {
+        expect(RoomPerson(id: 'x', name: 'X', state: state).ready, isFalse);
+      }
+    });
+  });
+
+  group('stage', () {
+    for (final size in [...desktopSizes, tiledSize]) {
+      final label = '${size.width.toInt()}x${size.height.toInt()}';
+      for (final (name, fileAspect, want) in [
+        ('16:9 file', 16 / 9, 16 / 9),
+        ('1.63:1 file', 1.63, 16 / 9),
+        ('scope file', 2.39, 2.39),
+      ]) {
+        testWidgets('is ${want.toStringAsFixed(2)}:1 for a $name at $label', (
+          tester,
+        ) async {
+          useWindow(tester, size);
+          await pumpRoom(
+            tester,
+            RoomViewData(
+              room: roomCode,
+              people: crowd,
+              stage: StageMode.video,
+              aspect: fileAspect,
+            ),
+          );
+          final stage = tester.getRect(find.byKey(roomStageKey));
+          expect(stage.width / stage.height, closeTo(want, 0.01));
+          // Centred in the space left of the rail (the rail is a sheet when tiled).
+          final left = size.width - (size.width < 1024 ? 0 : 320);
+          expect(stage.center.dx, closeTo(left / 2, 0.5));
+        });
+      }
+    }
+
+    testWidgets('empty stage is 16:9 too', (tester) async {
+      useWindow(tester, desktopSizes.first);
+      await pumpRoom(tester, empty);
+      final stage = tester.getSize(find.byKey(roomStageKey));
+      expect(stage.width / stage.height, closeTo(16 / 9, 0.01));
+    });
+  });
+
+  testWidgets('tiled: the rail becomes a sheet behind the people button', (
+    tester,
+  ) async {
+    useWindow(tester, tiledSize);
+    await pumpRoom(tester, video());
+    expect(find.text('IN THIS ROOM'), findsNothing);
+    await tester.tap(find.byTooltip('People and queue'));
+    await tester.pump();
+    expect(find.text('IN THIS ROOM'), findsOneWidget);
+    expect(find.text('Drifting +2s'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(find.text('IN THIS ROOM'), findsNothing);
   });
 
   testWidgets('rail shows every person state, HOST tag and queue', (
@@ -166,11 +272,15 @@ void main() {
     tester,
   ) async {
     useWindow(tester, desktopSizes.first);
-    final handle = tester.ensureSemantics(); // bySemanticsLabel needs a semantics tree
+    final handle = tester
+        .ensureSemantics(); // bySemanticsLabel needs a semantics tree
     await pumpRoom(tester, video(connected: false));
     expect(find.textContaining('Reconnecting…'), findsOneWidget);
     // The tile merges its title and detail into one label; match the title inside it.
-    expect(find.bySemanticsLabel(RegExp('movie-night_1080p\\.mkv')), findsWidgets);
+    expect(
+      find.bySemanticsLabel(RegExp('movie-night_1080p\\.mkv')),
+      findsWidgets,
+    );
     expect(tapFor(tester, 'Pause (Space)').onTap, isNull);
     expect(tapFor(tester, 'Ahead 10s (→)').onTap, isNull);
     handle.dispose(); // must happen inside the test body, not in a tearDown
@@ -246,7 +356,7 @@ void main() {
     expect(find.text('Paused by Mika · 12:04'), findsOneWidget);
   });
 
-  for (final size in desktopSizes) {
+  for (final size in [...desktopSizes, tiledSize]) {
     final label = '${size.width.toInt()}x${size.height.toInt()}';
     for (final (name, data) in [
       ('empty', empty),
@@ -254,7 +364,11 @@ void main() {
       ('disconnected', video(connected: false)),
       (
         'waiting',
-        const RoomViewData(room: roomCode, stage: StageMode.waiting, mismatch: true),
+        const RoomViewData(
+          room: roomCode,
+          stage: StageMode.waiting,
+          mismatch: true,
+        ),
       ),
     ]) {
       testWidgets('Room fits $label $name', (tester) async {

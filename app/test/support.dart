@@ -57,6 +57,9 @@ void useWindow(WidgetTester tester, Size size) {
 
 const List<Size> desktopSizes = [Size(1440, 900), Size(1100, 720)];
 
+/// Hyprland tiles the window to this on a 1920 screen, ignoring the min-size hint.
+const Size tiledSize = Size(856, 1038);
+
 /// An in-memory clipboard behind `SystemChannels.platform`.
 class FakeClipboard {
   String? text;

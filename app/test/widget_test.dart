@@ -67,6 +67,34 @@ void main() {
       expect(find.text('Join a room'), findsOneWidget);
       expect(find.text('Start a room'), findsOneWidget);
       expect(find.text('Paste an invite to join'), findsOneWidget);
+      expect(find.text('How it works'), findsNothing);
+    });
+
+    testWidgets('tiled: brand stacks above a full-width card, steps fold', (
+      tester,
+    ) async {
+      useWindow(tester, tiledSize);
+      await pumpHome(tester);
+      expect(
+        tester.getBottomLeft(find.text('Same moment.')).dy,
+        lessThan(tester.getTopLeft(find.byKey(homeCardKey)).dy),
+      );
+      expect(
+        tester.getSize(find.byKey(homeCardKey)).width,
+        tiledSize.width - 2 * WtSpace.window,
+      );
+      expect(find.text('Change server'), findsOneWidget);
+      expect(find.text('Paste the invite'), findsNothing);
+
+      await tester.tap(find.text('How it works'));
+      await tester.pumpAndSettle();
+      expect(find.text('Paste the invite'), findsOneWidget);
+      expect(find.text('NEXT'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.text('How it works'));
+      await tester.pumpAndSettle();
+      expect(find.text('Paste the invite'), findsNothing);
     });
 
     testWidgets('malformed link gets a calm inline error', (tester) async {
@@ -160,7 +188,7 @@ void main() {
       expect(joinButton(tester, 'Join room')?.onPressed, isNotNull);
     });
 
-    for (final size in desktopSizes) {
+    for (final size in [...desktopSizes, tiledSize]) {
       final label = '${size.width.toInt()}x${size.height.toInt()}';
       testWidgets('fits $label empty', (tester) async {
         useWindow(tester, size);

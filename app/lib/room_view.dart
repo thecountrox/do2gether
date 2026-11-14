@@ -9,12 +9,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'format.dart';
+import 'player.dart' show seekAtMs;
 import 'theme.dart';
 import 'widgets/button.dart';
 import 'widgets/chrome.dart';
 import 'widgets/identity.dart';
 
 const int seekStepMs = 10000;
+
+/// Stage shape for scope files; everything else gets a 16:9 stage.
+const double scopeAspect = 2.39;
+
+/// 16:9, or 2.39:1 when the file is scope-wide; the picture letterboxes inside, never stretched.
+double stageAspect(double fileAspect) =>
+    fileAspect >= (16 / 9 + scopeAspect) / 2 ? scopeAspect : 16 / 9;
+
+/// The video stage box, for layout tests.
+const Key roomStageKey = ValueKey('room-stage');
 
 enum PersonState { synced, buffering, drifting, noFile, reconnecting }
 
@@ -33,6 +44,15 @@ class RoomPerson {
   final bool host;
   final PersonState state;
   final double driftMs;
+
+  /// Synced, or drifting within the seek threshold (the player is still nudging it in).
+  bool get ready => switch (state) {
+    PersonState.synced => true,
+    PersonState.drifting => driftMs.abs() < seekAtMs,
+    PersonState.buffering ||
+    PersonState.noFile ||
+    PersonState.reconnecting => false,
+  };
 
   String get status => switch (state) {
     PersonState.synced => 'Synced',
@@ -110,8 +130,7 @@ class RoomViewData {
   final bool fullscreen;
   final PauseNotice? pause;
 
-  int get readyCount =>
-      people.where((p) => p.state == PersonState.synced).length;
+  int get readyCount => people.where((p) => p.ready).length;
 }
 
 class RoomView extends StatefulWidget {
@@ -153,6 +172,9 @@ class _RoomViewState extends State<RoomView> {
   Timer? _toastTimer;
   bool _copied = false;
   Timer? _copyTimer;
+
+  /// The rail as an overlay sheet, below [wtCompactWidth].
+  bool _sheet = false;
 
   RoomViewData get _d => widget.data;
   bool get _hasFile => _d.stage == StageMode.video;
@@ -212,72 +234,115 @@ class _RoomViewState extends State<RoomView> {
             run(_hasFile ? widget.onFullscreen : null),
         const SingleActivator(LogicalKeyboardKey.keyM): () =>
             run(_hasFile ? widget.onToggleMute : null),
-        const SingleActivator(LogicalKeyboardKey.escape): () =>
-            run(_d.fullscreen ? widget.onFullscreen : null),
+        const SingleActivator(LogicalKeyboardKey.escape): () => _sheet
+            ? setState(() => _sheet = false)
+            : run(_d.fullscreen ? widget.onFullscreen : null),
       },
       child: Focus(
         autofocus: true,
         child: ColoredBox(
           color: WtColors.board,
-          child: Stack(
-            children: [
-              Column(
+          child: LayoutBuilder(
+            builder: (context, box) {
+              final compact = box.maxWidth < wtCompactWidth;
+              final rail = !_d.fullscreen;
+              return Stack(
                 children: [
-                  if (!_d.fullscreen) _topBar(),
-                  if (!_d.connected) _banner(),
-                  Expanded(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(child: _stageArea()),
-                        if (!_d.fullscreen) _Rail(data: _d, onAdd: widget.onAddToQueue),
-                      ],
-                    ),
+                  Column(
+                    children: [
+                      if (!_d.fullscreen) _topBar(compact: compact),
+                      if (!_d.connected) _banner(),
+                      Expanded(
+                        child: Stack(
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Expanded(child: _stageArea()),
+                                if (rail && !compact)
+                                  _Rail(data: _d, onAdd: widget.onAddToQueue),
+                              ],
+                            ),
+                            if (rail && compact && _sheet) ...[
+                              Positioned.fill(
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: () => setState(() => _sheet = false),
+                                  child: const ColoredBox(
+                                    color: Color(0x8C000000),
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                top: 0,
+                                right: 0,
+                                bottom: 0,
+                                child: DecoratedBox(
+                                  decoration: const BoxDecoration(
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Color(0x99000000),
+                                        blurRadius: 40,
+                                        spreadRadius: -10,
+                                      ),
+                                    ],
+                                  ),
+                                  child: _Rail(
+                                    data: _d,
+                                    onAdd: widget.onAddToQueue,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      _dock(compact: compact),
+                    ],
                   ),
-                  _dock(),
-                ],
-              ),
-              Positioned(
-                left: 0,
-                top: 0,
-                child: CompositedTransformFollower(
-                  link: _playLink,
-                  showWhenUnlinked: false,
-                  targetAnchor: Alignment.topCenter,
-                  followerAnchor: Alignment.bottomCenter,
-                  // 12 px above the dock: the play button sits 12 px below its top edge.
-                  offset: const Offset(0, -24),
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 160),
-                    switchInCurve: Curves.easeOutCubic,
-                    transitionBuilder: (child, animation) => FadeTransition(
-                      opacity: animation,
-                      child: SlideTransition(
-                        position: Tween(
-                          begin: const Offset(0, 0.3),
-                          end: Offset.zero,
-                        ).animate(animation),
-                        child: child,
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    child: CompositedTransformFollower(
+                      link: _playLink,
+                      showWhenUnlinked: false,
+                      targetAnchor: Alignment.topCenter,
+                      followerAnchor: Alignment.bottomCenter,
+                      // 12 px above the dock: the play button sits 12 px below its top edge.
+                      offset: const Offset(0, -24),
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 160),
+                        switchInCurve: Curves.easeOutCubic,
+                        transitionBuilder: (child, animation) => FadeTransition(
+                          opacity: animation,
+                          child: SlideTransition(
+                            position: Tween(
+                              begin: const Offset(0, 0.3),
+                              end: Offset.zero,
+                            ).animate(animation),
+                            child: child,
+                          ),
+                        ),
+                        child: _toast && _d.pause != null
+                            ? _Toast(
+                                key: ValueKey(_d.pause!.serial),
+                                notice: _d.pause!,
+                                onResume: _d.connected ? widget.onPlay : null,
+                              )
+                            : const SizedBox.shrink(),
                       ),
                     ),
-                    child: _toast && _d.pause != null
-                        ? _Toast(
-                            key: ValueKey(_d.pause!.serial),
-                            notice: _d.pause!,
-                            onResume: _d.connected ? widget.onPlay : null,
-                          )
-                        : const SizedBox.shrink(),
                   ),
-                ),
-              ),
-            ],
+                ],
+              );
+            },
           ),
         ),
       ),
     );
   }
 
-  Widget _topBar() {
+  Widget _topBar({required bool compact}) {
     final total = _d.people.length;
     final ready = _d.readyCount;
     final allIn = total > 0 && ready >= total;
@@ -296,13 +361,22 @@ class _RoomViewState extends State<RoomView> {
             onPressed: widget.onBack,
           ),
           const SizedBox(width: 14),
-          const WtWordmark(size: 17, mark: 32),
-          Container(
-            width: 2,
-            height: 24,
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            color: WtColors.line,
-          ),
+          if (compact) ...[
+            Semantics(
+              label: 'watch together',
+              excludeSemantics: true,
+              child: const WtMark(size: 32),
+            ),
+            const SizedBox(width: 12),
+          ] else ...[
+            const WtWordmark(size: 17, mark: 32),
+            Container(
+              width: 2,
+              height: 24,
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              color: WtColors.line,
+            ),
+          ],
           Flexible(
             child: Text(
               _d.title,
@@ -334,6 +408,15 @@ class _RoomViewState extends State<RoomView> {
             ),
           ),
           const SizedBox(width: 12),
+          if (compact) ...[
+            WtIconButton(
+              icon: Icons.people_alt_rounded,
+              tooltip: _sheet ? 'Hide people and queue' : 'People and queue',
+              background: _sheet ? WtColors.s2 : WtColors.s1,
+              onPressed: () => setState(() => _sheet = !_sheet),
+            ),
+            const SizedBox(width: 12),
+          ],
           WtIconButton(
             icon: Icons.settings_outlined,
             tooltip: 'Settings',
@@ -390,13 +473,14 @@ class _RoomViewState extends State<RoomView> {
       padding: const EdgeInsets.all(WtSpace.window),
       child: LayoutBuilder(
         builder: (context, box) {
-          final aspect = _hasFile ? _d.aspect : 16 / 9;
+          final aspect = _hasFile ? stageAspect(_d.aspect) : 16 / 9;
           final width = math.min(
             math.min(box.maxWidth, _d.fullscreen ? box.maxWidth : 1072.0),
             box.maxHeight * aspect,
           );
           return Center(
             child: SizedBox(
+              key: roomStageKey,
               width: width,
               height: width / aspect,
               child: _stage(),
@@ -472,7 +556,8 @@ class _RoomViewState extends State<RoomView> {
     }
   }
 
-  Widget _dock() {
+  /// [compact] drops the now-playing title (it is in the queue sheet) so the scrubber keeps its width.
+  Widget _dock({required bool compact}) {
     const timeStyle = TextStyle(
       fontSize: 14,
       fontWeight: FontWeight.w800,
@@ -488,38 +573,40 @@ class _RoomViewState extends State<RoomView> {
       ),
       child: Row(
         children: [
-          Flexible(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 240),
-              child: Opacity(
-                opacity: _hasFile ? 1 : 0.4,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Now playing',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: WtColors.tx3,
+          if (!compact) ...[
+            Flexible(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 240),
+                child: Opacity(
+                  opacity: _hasFile ? 1 : 0.4,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Now playing',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: WtColors.tx3,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    WtMidText(
-                      _d.fileName ?? 'No file open',
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                        color: WtColors.text,
+                      const SizedBox(height: 2),
+                      WtMidText(
+                        _d.fileName ?? 'No file open',
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          color: WtColors.text,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(width: 16),
+            const SizedBox(width: 16),
+          ],
           _SkipButton(back: true, onTap: _seek(-seekStepMs)),
           const SizedBox(width: 12),
           CompositedTransformTarget(
@@ -934,7 +1021,11 @@ class _Toast extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (by == null)
-                      const Icon(Icons.pause_rounded, size: 20, color: WtColors.tx2)
+                      const Icon(
+                        Icons.pause_rounded,
+                        size: 20,
+                        color: WtColors.tx2,
+                      )
                     else
                       WtAvatar(id: by, name: by, size: 32, ring: bg),
                     const SizedBox(width: 10),
@@ -944,7 +1035,9 @@ class _Toast extends StatelessWidget {
                           if (by != null)
                             TextSpan(
                               text: '$by ',
-                              style: const TextStyle(fontWeight: FontWeight.w900),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                              ),
                             ),
                           TextSpan(
                             text: by == null
@@ -1081,7 +1174,8 @@ class _PersonTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = person;
-    final warn = p.state == PersonState.noFile || p.state == PersonState.drifting;
+    final warn =
+        p.state == PersonState.noFile || p.state == PersonState.drifting;
     final (color, dot) = switch (p.state) {
       PersonState.synced => (WtColors.cyan, WtDotStyle.solid),
       PersonState.buffering => (WtColors.yellow, WtDotStyle.ring),
@@ -1180,7 +1274,11 @@ class _PersonTile extends StatelessWidget {
       ),
     );
     return warn
-        ? WtDashed(color: const Color(0x66FFD45E), radius: WtRadius.control, child: row)
+        ? WtDashed(
+            color: const Color(0x66FFD45E),
+            radius: WtRadius.control,
+            child: row,
+          )
         : row;
   }
 }

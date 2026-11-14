@@ -1,4 +1,4 @@
-import { randomInt } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { serverNow } from './clock.ts';
@@ -29,8 +29,24 @@ function onRequest(rooms: Map<string, Room>, req: IncomingMessage, res: ServerRe
   const url = URL.parse(req.url ?? '/', 'http://localhost');
   if (req.method === 'POST' && url?.pathname === '/rooms') {
     const id = newRoomId(rooms);
-    rooms.set(id, createRoom(id));
-    sendJson(res, 201, { room_id: id, join_token: signToken(id) });
+    const room = createRoom(id);
+    room.hostId = `host-${randomBytes(6).toString('hex')}`;
+    rooms.set(id, room);
+    sendJson(res, 201, { room_id: id, join_token: signToken(id), host_id: room.hostId });
+  } else if (req.method === 'GET' && url?.pathname?.startsWith('/rooms/')) {
+    const id = url.pathname.slice('/rooms/'.length);
+    const room = rooms.get(id);
+    if (!room || !id || id.includes('/')) {
+      res.writeHead(404).end();
+      return;
+    }
+    const members = [...room.clients].flatMap((c) => c.member ? [c.member] : []);
+    sendJson(res, 200, {
+      room_id: id,
+      host_name: members.find((m) => m.user_id === room.hostId)?.name ?? 'Host',
+      member_count: members.length,
+      playback: room.playback,
+    });
   } else if (req.method === 'GET' && url?.pathname === '/health') {
     sendJson(res, 200, { ok: true });
   } else {
