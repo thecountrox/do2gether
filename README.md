@@ -1,99 +1,90 @@
-# watch-together
+# do2gether
 
-Watch, listen and play together. One room, two modes, Discord as the lobby.
+Watch, listen and do things together. One room, everyone's own player, in sync. Discord is the
+lobby; the app is the screen.
 
-**v0 is live:** Rust room server deployed at `https://watch.141.253.97.15.sslip.io`, and `wt-play` — a real mpv client that joins a room, syncs to the room anchor, and reports drift. Measured over the public wss endpoint on one machine: **max 120 ms, p95 119 ms** after play, seek and pause.
+**Shipped (v1):** Linux + Windows desktop client, Rust room server, Discord bot.
 
-**v1 client:** `app/` is a Flutter desktop client — join screen, `Create room`, presence, clock,
-`media_kit` player keyed by the same `item_ref`, drift correction and telemetry. `flutter analyze`,
-26 tests and `flutter build linux --debug` are green; the bundle launches under Xvfb.
+| Thing | Where |
+|---|---|
+| Room server | https://watch.141.253.97.15.sslip.io (`/health`, `/metrics`, `/stats`) |
+| Discord bot | `watch-together#6690`, `/room create`, in the Mikunomics guild |
+| Linux build | https://files.141.253.97.15.sslip.io/user_uploads/watch-together/do2gether-linux-x64.tar.gz (19 MB) |
+| Windows build | https://files.141.253.97.15.sslip.io/user_uploads/watch-together/do2gether-windows-x64.zip (40 MB) |
+| Source | private `thecountrox/do2gether` |
 
-**Android:** release APK (AOT, `libmpv.so` bundled, minSdk 24, target 36):
-`app-arm64-v8a-release.apk`, 30.8 MB — https://files.141.253.97.15.sslip.io/user_uploads/watch-together/app-arm64-v8a-release.apk
-Universal APK (all three ABIs, 89 MB): https://files.141.253.97.15.sslip.io/user_uploads/watch-together/app-universal-release.apk
-Built on gigapc (x86_64) because the nix Flutter SDK on this arm64 host has no Android AOT
-`gen_snapshot`; recipe in `docs/04-android.md`. Release is signed with the Flutter template's debug
-key — installable, not Play-signed.
+## Install and run
+
+**Linux:** extract the tarball and run `bundle/watch_together`. No installer needed — on first run the
+app registers `do2gether://` with your desktop, so invite links open it directly.
+
+**Windows:** unzip and run `watch_together.exe`. The first run writes `HKCU\Software\Classes\do2gether`
+so invite links work without an installer or elevation.
+
+**Invites:** `/room create` in Discord DMs you a join link → the join page's button is
+`do2gether://join?room=…&token=…` → clicking it opens the app with the room already filled in.
+
+## What works today
+
+- Rooms with HMAC join tokens (10 min TTL, user-bound), embeddings of `host`/`all` control modes,
+  lock/kick, 24 h idle TTL, SQLite persistence across restarts.
+- Four-timestamp clock exchange, server-authoritative anchor, drift policy: ignore <250 ms, rate nudge
+  250 ms–2 s, hard seek >2 s.
+- Flutter desktop client: Home launcher, Room ready dialog, player + member rail + dock, candy palette,
+  responsive down to a tiled 856 px window.
+- Invite deep links on both desktop platforms; the app self-registers the URL scheme.
+- `wt-play` CLI (mpv over JSON IPC) for headless sync, plus `scripts/drift-check.py`.
+
+**Measured:** two clients, deployed server, `p95 0 ms / max 1 ms` (simulated players on one host, so it
+proves the anchor math, not WAN jitter). Earlier real-mpv run over the public endpoint: p95 119 ms.
+
+**Tests:** Rust 63 + 3 CLI integration, Flutter 105, bot 8 — green. `cargo clippy -D warnings` and
+`flutter analyze` clean (two pre-existing info lints).
 
 ## Layout
 
 ```
-docs/        spec, protocol notes, decisions, stack
+app/         Flutter desktop client
+rust/        wt-protocol, wt-server, wt-cli (wt-play)
+bot/         Discord bot (discord.js)
+server/      TypeScript reference implementation (delete after the Rust one proves itself)
 protocol/    room.schema.json — canonical wire format
-rust/        wt-protocol, wt-server, wt-cli (wt-play)   <- production code
-server/      TypeScript reference implementation (kept until parity is signed off)
-app/         Flutter client (v1, not started)
-ext/         browser extension for YouTube / YTM (v1, not started)
-deploy/      systemd unit, Caddy block, ops notes
-scripts/     demo-local.sh — two mpv clients against a room
+docs/        spec, protocol, decisions, stack, roadmap, design
+deploy/      systemd units, Caddy block, ops notes
+scripts/     desktop-shot.sh, deploy-linux.sh, launch-and-shot.sh, drift-check.py, demo-local.sh
 ```
 
-## Quick start
+## Quick start (local)
 
 ```bash
 cd rust
 cargo build --release -p wt-server -p wt-cli
-cargo test                       # 44 tests
+WT_SECRET=dev ./target/release/wt-server          # terminal 1
 
-# terminal 1
-WT_SECRET=dev ./target/release/wt-server
-
-# terminal 2 — create a room and play a file
 ./target/release/wt-play --server http://127.0.0.1:8787 --create --file /tmp/movie.mp4
-
-# terminal 3 — join it (copy the share line from terminal 2)
 ./target/release/wt-play --server http://127.0.0.1:8787 --room <id> --token <token> --file /tmp/movie.mp4
 ```
 
-Against the deployed server:
+`wt-play` stdin: `play`, `pause`, `seek <ms>`, `q`.
+
+Two-client drift against the deployed server:
 
 ```bash
-./target/release/wt-play --server https://watch.141.253.97.15.sslip.io --create --file /tmp/movie.mp4
+python3 scripts/drift-check.py     # host creates; guest token minted through the bot API
 ```
-
-stdin commands in `wt-play`: `play`, `pause`, `seek <ms>`, `q`.
-
-## What works
-
-- Rooms, HMAC join tokens (10 min), `hello`/`welcome` snapshots, presence keyed by user.
-- Bot API (`WT_BOT_TOKEN` bearer auth): `POST /rooms/{id}/tokens`, `PATCH /rooms/{id}`, `DELETE /rooms/{id}`; public `GET /rooms/{id}`, `/metrics`, and `/stats`.
-- Four-timestamp clock exchange; offset ±1 ms on loopback, ±50 ms tested.
-- Playback as an anchor: play/pause/seek/queue/skip with monotonic `rev`/`seq`, explicit `reject` for refused intents.
-- mpv client with drift policy (ignore < 250 ms, rate 250 ms–2 s, seek > 2 s), `--hr-seek=yes`, telemetry every 5 s.
-- TLS end to end (rustls, native roots), deployed behind Caddy with a real certificate.
-- Two headless mpv clients converge; `scripts/demo-local.sh` reproduces it.
-
-## Backend (v1.1)
-
-- **SQLite persistence** (WAL): rooms, playback, queues and lock/controls survive a restart; rooms
-  reload at boot, members rebuild from connections.
-- **Lifecycle**: 24 h idle TTL swept every minute, max 500 rooms, 50 members/room, 200 queue items,
-  5 room creations/min/IP.
-- **Permissions**: `host` (default) or `all`; `play/pause/seek/skip` host-only in `host` mode,
-  `queue_*` always open, `set_controls`/`lock`/`kick` host-only. Locked rooms reject joins (4003),
-  kicks close 4005.
-- **Bot API** (`WT_BOT_TOKEN`): `GET /rooms/{id}`, `POST /rooms/{id}/tokens`, `PATCH`, `DELETE`.
-- **Observability**: `/metrics` (Prometheus) and `/stats` (JSON, p50/p95 drift per room), counters
-  for intents and rejects.
-
-Verified live on the deployed server: create with `host_id` → public snapshot → bot token → guest
-`play` rejected `not_host` → `queue_add` accepted → lock → service restart → `locked=true, rev=1`.
 
 ## Known gaps
 
-- Bot-minted join tokens are room-bound but not user-bound: the joining client claims its identity in `hello`.
-- Drift after a seek settles around 100–180 ms, inside the 250 ms video tolerance but not tight enough for music (needs the host-stream model).
-- No Discord bot yet — needs a bot token and the choice of separate bot vs Clawn plugin.
-- Android is a debug APK, not a release build (nix SDK lacks AOT `gen_snapshot` on linux-arm64).
-- TypeScript server remains as the reference; it will be deleted once the Rust one has run for a week.
+- Guests must have their own copy of the file (or a URL ref); no Jellyfin adapter yet.
+- Clicking an invite while the app is already running opens a second window instead of focusing the
+  first — single-instance handling is not done.
+- Drift settles 100–180 ms after a seek: fine for video, not for music (needs the host-stream model).
+- Windows build is CI-produced and unsigned; SmartScreen will warn.
+- Music (Navidrome/Jellyfin) and YouTube sources are designed, not built.
 
 ## Next
 
-- Flutter app: room list, media library, mpv texture, join from Discord.
-- Discord bot: OAuth, join tokens, voice-state gating, now-playing card, control buttons.
-- Navidrome adapter + host-stream mode (music done right).
-- Extension scaffold for YouTube, then the YTM spike.
-
-## Design dialogue
-
-Architecture was stress-tested with Claude Opus 5.5; transcript and decision table in `~/hermes_message_home/watch-together-design/dialogue-2026-11-07.md`.
+1. Jellyfin direct-play adapter (`jellyfin:<server>/<item>`), no server egress.
+2. Single-instance deep links (focus the running window and hand it the invite).
+3. Rename pass to `do2gether` for ids/binary/service names.
+4. Phone companion remote: join, now-playing, transport — no decoding.

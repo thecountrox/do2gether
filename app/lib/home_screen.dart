@@ -46,12 +46,16 @@ class HomeScreen extends StatefulWidget {
     this.api = const HttpRoomApi(),
     this.pickCopy = pickLocalCopy,
     this.initialInvite,
+    this.forwardedInvites,
   });
   final RoomApi api;
   final PickCopy pickCopy;
 
   /// Invite URL the app was launched with, if any.
   final String? initialInvite;
+
+  /// Invites that arrived from a second launch while this window was already open.
+  final Stream<String>? forwardedInvites;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -85,10 +89,22 @@ class _HomeScreenState extends State<HomeScreen> {
       _invite.text = invite;
       _onInvite(invite);
     }
+    _forwarded = widget.forwardedInvites?.listen(_takeForwarded);
+  }
+
+  StreamSubscription<String>? _forwarded;
+
+  /// A later launch handed us an invite: show it without losing the room we are already in.
+  void _takeForwarded(String text) {
+    final link = parseInviteLink(text);
+    if (link == null || !mounted) return;
+    _invite.text = text;
+    _onInvite(text);
   }
 
   @override
   void dispose() {
+    unawaited(_forwarded?.cancel());
     _invite.dispose();
     super.dispose();
   }
