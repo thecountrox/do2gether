@@ -69,6 +69,7 @@ void main() {
     ValueChanged<int>? onSeekTo,
     VoidCallback? onFullscreen,
     VoidCallback? onToggleMute,
+    VoidCallback? onOpenJellyfin,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -79,6 +80,7 @@ void main() {
             video: const ColoredBox(color: Colors.black),
             onBack: () {},
             onOpenFile: () {},
+            onOpenJellyfin: onOpenJellyfin,
             onPlay: onPlay ?? () {},
             onPause: onPause ?? () {},
             onSeekBy: onSeekBy ?? (_) {},
@@ -354,6 +356,20 @@ void main() {
       findsNothing,
     );
     expect(find.text('Paused by Mika · 12:04'), findsOneWidget);
+  });
+
+  testWidgets('the empty stage offers Jellyfin only when it can be opened', (
+    tester,
+  ) async {
+    var opened = 0;
+    await pumpRoom(tester, empty, onOpenJellyfin: () => opened++);
+    await tester.tap(find.text('Or pick from Jellyfin'));
+    await tester.pumpAndSettle();
+    expect(opened, 1);
+
+    await pumpRoom(tester, empty);
+    expect(find.text('Or pick from Jellyfin'), findsNothing);
+    expect(find.text('Open file'), findsOneWidget);
   });
 
   for (final size in [...desktopSizes, tiledSize]) {

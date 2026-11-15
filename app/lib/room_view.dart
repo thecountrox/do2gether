@@ -140,6 +140,7 @@ class RoomView extends StatefulWidget {
     required this.video,
     this.onBack,
     this.onOpenFile,
+    this.onOpenJellyfin,
     this.onPlay,
     this.onPause,
     this.onSeekBy,
@@ -153,6 +154,9 @@ class RoomView extends StatefulWidget {
   final Widget video;
   final VoidCallback? onBack;
   final VoidCallback? onOpenFile;
+
+  /// Pick a Jellyfin item instead of a local file; null hides the option.
+  final VoidCallback? onOpenJellyfin;
   final VoidCallback? onPlay;
   final VoidCallback? onPause;
   final ValueChanged<int>? onSeekBy;
@@ -525,6 +529,14 @@ class _RoomViewState extends State<RoomView> {
             icon: Icons.folder_open_rounded,
             onPressed: _d.opening ? null : widget.onOpenFile,
           ),
+          alt: widget.onOpenJellyfin == null
+              ? null
+              : WtButton(
+                  label: 'Or pick from Jellyfin',
+                  icon: Icons.dns_rounded,
+                  style: WtButtonStyle.ghost,
+                  onPressed: _d.opening ? null : widget.onOpenJellyfin,
+                ),
         );
       case StageMode.waiting:
         return _StagePanel(
@@ -880,12 +892,16 @@ class _StagePanel extends StatelessWidget {
     required this.title,
     required this.body,
     required this.action,
+    this.alt,
   });
   final Color outline;
   final Widget tile;
   final String title;
   final String body;
   final Widget action;
+
+  /// A second, quieter way to get the same thing (e.g. Jellyfin next to a local file).
+  final Widget? alt;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -919,6 +935,7 @@ class _StagePanel extends StatelessWidget {
             ),
             const SizedBox(height: 20),
             action,
+            if (alt != null) ...[const SizedBox(height: 10), alt!],
           ],
         ),
       ),

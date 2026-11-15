@@ -31,6 +31,7 @@ class RoomScreen extends StatefulWidget {
     this.clientId,
     this.initialCopy,
     this.pickCopy = pickLocalCopy,
+    this.pickJellyfin,
   });
 
   final Uri server;
@@ -42,6 +43,9 @@ class RoomScreen extends StatefulWidget {
   /// The copy chosen on Home or in the room-ready dialog; opened on entry.
   final LocalCopy? initialCopy;
   final PickCopy pickCopy;
+
+  /// Opens the Jellyfin picker; null when the app has no Jellyfin support in this context.
+  final PickCopy? pickJellyfin;
 
   @override
   State<RoomScreen> createState() => _RoomScreenState();
@@ -262,6 +266,15 @@ class _RoomScreenState extends State<RoomScreen> {
     await _apply();
   }
 
+  /// Same path as a local file once the picker hands back a remote copy.
+  Future<void> _openJellyfin() async {
+    final pick = widget.pickJellyfin;
+    if (pick == null) return;
+    final copy = await pick();
+    if (copy == null || !mounted) return;
+    await _openRemote(copy);
+  }
+
   Future<void> _addToQueue() async {
     final copy = await widget.pickCopy();
     if (copy == null || !mounted) return;
@@ -457,6 +470,7 @@ class _RoomScreenState extends State<RoomScreen> {
       ),
       onBack: () => Navigator.of(context).pop(),
       onOpenFile: _openFile,
+      onOpenJellyfin: widget.pickJellyfin == null ? null : _openJellyfin,
       onPlay: _play,
       onPause: _pauseRoom,
       onSeekBy: _seekBy,

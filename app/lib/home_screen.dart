@@ -202,14 +202,17 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _pickJellyfin() async {
-    final copy = await showJellyfinPicker(
-      context,
-      api: widget.jellyfin,
-      session: _jellyfin,
-      onSession: (session) => _jellyfin = session,
-    );
+    final copy = await _pickJellyfinCopy();
     if (copy != null && mounted) setState(() => _copy = copy);
   }
+
+  /// Opens the picker without touching Home's own copy — the room screen calls this directly.
+  Future<LocalCopy?> _pickJellyfinCopy() => showJellyfinPicker(
+    context,
+    api: widget.jellyfin,
+    session: _jellyfin,
+    onSession: (session) => _jellyfin = session,
+  );
 
   bool get _linkUsable =>
       _link != null &&
@@ -237,6 +240,7 @@ class _HomeScreenState extends State<HomeScreen> {
           name: _name,
           clientId: hostId,
           initialCopy: copy,
+          pickJellyfin: _pickJellyfinCopy,
         ),
       ),
     );
@@ -643,12 +647,14 @@ class _HomeScreenState extends State<HomeScreen> {
         onPressed: _join,
       );
     }
-    final needsCopy = _linkUsable && _copy == null;
-    final reason = needsCopy
-        ? 'Open your copy to join'
+    // Shown even with no invite yet: picking what you'll play is the second half of joining, and
+    // hiding it until a link is pasted made the Jellyfin picker unfindable.
+    final needsCopy = _copy == null;
+    final reason = !_linkUsable
+        ? 'Paste an invite to join'
         : _state == InviteState.checking
         ? 'Checking the room…'
-        : 'Paste an invite to join';
+        : 'Open your copy to join';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -692,7 +698,9 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Expanded(
                 child: Text(
-                  host == null
+                  !_linkUsable
+                      ? 'Or bring your own copy first.'
+                      : host == null
                       ? 'Pick the same file everyone else has.'
                       : '$host is playing their copy. Pick the same file.',
                   maxLines: 1,
@@ -714,6 +722,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 compact: true,
                 onPressed: _picking ? null : _pickJellyfin,
               ),
+              const SizedBox(width: 4),
             ],
           ),
         ],
