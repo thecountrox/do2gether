@@ -20,17 +20,21 @@ const RoomViewData _room = RoomViewData(
     RoomPerson(id: 'jo', name: 'Jo', state: PersonState.noFile),
     RoomPerson(id: 'al', name: 'Al', state: PersonState.buffering),
   ],
-  nowPlaying: (title: 'movie-night_1080p.mkv', detail: '1:52:10'),
+  nowPlaying: (title: 'sample-room', detail: '0:20'),
   upNext: [
     (title: 'episode-02_1080p.mkv', detail: '24:10'),
     (title: 'bonus_credits.mkv', detail: '4:11'),
   ],
   stage: StageMode.video,
-  fileName: 'movie-night_1080p.mkv',
+  fileName: 'sample-room',
+  source: MediaSource.jellyfin,
   positionMs: 724000,
   durationMs: 6730000,
-  bufferedMs: 900000,
+  bufferedMs: 1900000,
   playing: true,
+  rate: 1.25,
+  sync: SyncState.adjusting,
+  driftMs: 180,
 );
 
 void main() {

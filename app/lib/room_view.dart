@@ -10,12 +10,11 @@ import 'package:flutter/services.dart';
 
 import 'format.dart';
 import 'player.dart' show seekAtMs;
+import 'room_controls.dart';
 import 'theme.dart';
 import 'widgets/button.dart';
 import 'widgets/chrome.dart';
 import 'widgets/identity.dart';
-
-const int seekStepMs = 10000;
 
 /// Stage shape for scope files; everything else gets a 16:9 stage.
 const double scopeAspect = 2.39;
@@ -26,6 +25,12 @@ double stageAspect(double fileAspect) =>
 
 /// The video stage box, for layout tests.
 const Key roomStageKey = ValueKey('room-stage');
+
+/// The dock, for the fullscreen auto-hide tests.
+const Key roomDockKey = ValueKey('room-dock');
+
+/// Fullscreen chrome (dock, exit button, cursor) hides after this long without pointer movement.
+const Duration chromeHideAfter = Duration(milliseconds: 2500);
 
 enum PersonState { synced, buffering, drifting, noFile, reconnecting }
 
@@ -64,11 +69,27 @@ class RoomPerson {
   };
 }
 
+/// The ready pill's tooltip: who is not ready, and why.
+String readyDetail(List<RoomPerson> people) {
+  final waiting = people.where((p) => !p.ready).toList();
+  if (waiting.isEmpty) return 'Everyone has the file and is in sync.';
+  return [
+    'Not ready yet',
+    for (final p in waiting) '${p.name}${p.you ? ' (you)' : ''} · ${p.status}',
+  ].join('\n');
+}
+
 enum StageMode { empty, waiting, video }
+
+/// Where a copy comes from: a file on disk, or a stream from the viewer's Jellyfin.
+enum MediaSource { local, jellyfin }
+
+/// `In sync`, or `Adjusting` while the drift policy is correcting.
+enum SyncState { inSync, adjusting }
 
 typedef QueueRow = ({String title, String detail});
 
-/// Shown as a toast, then as a badge on the stage while playback stays paused.
+/// Shown as a toast, then named on the stage while playback stays paused.
 class PauseNotice {
   const PauseNotice({required this.serial, required this.positionMs, this.by});
   final int serial;
@@ -92,13 +113,25 @@ class RoomViewData {
     this.stage = StageMode.empty,
     this.mismatch = false,
     this.opening = false,
+    this.buffering = false,
+    this.error,
+    this.ended = false,
+    this.waitingFor,
     this.fileName,
+    this.source,
+    this.roomSource,
     this.positionMs = 0,
     this.durationMs = 0,
     this.bufferedMs = 0,
     this.playing = false,
     this.aspect = 16 / 9,
     this.muted = false,
+    this.volume = 100,
+    this.rate = 1,
+    this.sync,
+    this.driftMs,
+    this.audioTracks = const [],
+    this.subtitleTracks = const [],
     this.fullscreen = false,
     this.pause,
   });
@@ -113,20 +146,58 @@ class RoomViewData {
   /// Set when the connection is gone for good (bad token, room ended); otherwise we retry.
   final String? disconnectReason;
   final List<RoomPerson> people;
+
+  /// The room's item; null while nobody has pressed play.
   final QueueRow? nowPlaying;
   final List<QueueRow> upNext;
   final StageMode stage;
 
   /// In [StageMode.waiting]: a file is open but it is not the room's file.
   final bool mismatch;
+
+  /// Our copy is being hashed or loaded; [fileName] names it.
   final bool opening;
+
+  /// The player is waiting for data.
+  final bool buffering;
+
+  /// Why our copy failed to open or play, in words for the error card.
+  final String? error;
+
+  /// Our copy reached its end.
+  final bool ended;
+
+  /// Who the room waits on to press play: a name, `You`, or null when nobody can tell.
+  final String? waitingFor;
+
+  /// Our copy's display name (a Jellyfin copy's picked title, never its URL).
   final String? fileName;
+
+  /// Where our copy comes from; null without one.
+  final MediaSource? source;
+
+  /// Where the room's item comes from, for the right "open that file" action.
+  final MediaSource? roomSource;
   final int positionMs;
   final int durationMs;
   final int bufferedMs;
   final bool playing;
   final double aspect;
   final bool muted;
+
+  /// 0–100, kept while muted.
+  final double volume;
+
+  /// The room's chosen speed. Never the drift engine's nudged rate.
+  final double rate;
+  final SyncState? sync;
+
+  /// Player minus room, for the sync tooltip.
+  final double? driftMs;
+  final List<TrackOption> audioTracks;
+
+  /// Includes `Off` when the player reports subtitles.
+  final List<TrackOption> subtitleTracks;
   final bool fullscreen;
   final PauseNotice? pause;
 
@@ -146,9 +217,15 @@ class RoomView extends StatefulWidget {
     this.onSeekBy,
     this.onSeekTo,
     this.onToggleMute,
+    this.onVolume,
     this.onFullscreen,
     this.onSettings,
     this.onAddToQueue,
+    this.onRetry,
+    this.onReplay,
+    this.onPlayNext,
+    this.onAudioTrack,
+    this.onSubtitleTrack,
   });
   final RoomViewData data;
   final Widget video;
@@ -162,9 +239,21 @@ class RoomView extends StatefulWidget {
   final ValueChanged<int>? onSeekBy;
   final ValueChanged<int>? onSeekTo;
   final VoidCallback? onToggleMute;
+  final ValueChanged<double>? onVolume;
   final VoidCallback? onFullscreen;
   final VoidCallback? onSettings;
   final VoidCallback? onAddToQueue;
+
+  /// Open the copy that failed again.
+  final VoidCallback? onRetry;
+
+  /// Play the room's item from the start.
+  final VoidCallback? onReplay;
+
+  /// Move the room to the head of the queue.
+  final VoidCallback? onPlayNext;
+  final ValueChanged<String>? onAudioTrack;
+  final ValueChanged<String>? onSubtitleTrack;
 
   @override
   State<RoomView> createState() => _RoomViewState();
@@ -180,9 +269,17 @@ class _RoomViewState extends State<RoomView> {
   /// The rail as an overlay sheet, below [wtCompactWidth].
   bool _sheet = false;
 
+  /// Fullscreen chrome auto-hide. Only a real pointer arms it, so a window nobody has pointed
+  /// at (and every widget test) keeps its controls.
+  bool _idle = false;
+  bool _pointerSeen = false;
+  bool _overChrome = false;
+  Timer? _idleTimer;
+
   RoomViewData get _d => widget.data;
   bool get _hasFile => _d.stage == StageMode.video;
   bool get _live => _hasFile && _d.connected;
+  bool get _chromeHidden => _d.fullscreen && _idle;
 
   @override
   void didUpdateWidget(RoomView old) {
@@ -195,12 +292,18 @@ class _RoomViewState extends State<RoomView> {
       _toast = true;
       _toastTimer = Timer(const Duration(seconds: 4), _hideToast);
     }
+    if (old.data.fullscreen != _d.fullscreen ||
+        old.data.playing != _d.playing) {
+      _idle = false;
+      _armIdle();
+    }
   }
 
   @override
   void dispose() {
     _toastTimer?.cancel();
     _copyTimer?.cancel();
+    _idleTimer?.cancel();
     super.dispose();
   }
 
@@ -218,22 +321,59 @@ class _RoomViewState extends State<RoomView> {
     });
   }
 
+  void _wake() {
+    if (_idle) setState(() => _idle = false);
+    _armIdle();
+  }
+
+  /// Hides the chrome after [chromeHideAfter] in fullscreen, while playing and not over a control.
+  void _armIdle() {
+    _idleTimer?.cancel();
+    if (!_d.fullscreen || !_pointerSeen) return;
+    _idleTimer = Timer(chromeHideAfter, () {
+      if (!mounted || !_d.fullscreen || !_d.playing || _overChrome) return;
+      setState(() => _idle = true);
+    });
+  }
+
+  void _chromeHover(bool over) {
+    _overChrome = over;
+    if (!over) _armIdle();
+  }
+
+  void _showShortcuts() => showShortcutSheet(context);
+
   VoidCallback? get _playPause =>
       !_live ? null : (_d.playing ? widget.onPause : widget.onPlay);
 
   VoidCallback? _seek(int delta) =>
       _live && widget.onSeekBy != null ? () => widget.onSeekBy!(delta) : null;
 
+  /// Why the transport is off, for its tooltips; null while it works.
+  String? get _offReason => !_hasFile
+      ? 'open a file first'
+      : !_d.connected
+      ? 'reconnecting'
+      : null;
+
   @override
   Widget build(BuildContext context) {
-    void run(VoidCallback? f) => f?.call();
+    void run(VoidCallback? f) {
+      _wake();
+      f?.call();
+    }
+
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.space): () => run(_playPause),
         const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
-            run(_seek(-seekStepMs)),
+            run(_seek(-arrowSeekMs)),
         const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
-            run(_seek(seekStepMs)),
+            run(_seek(arrowSeekMs)),
+        const SingleActivator(LogicalKeyboardKey.arrowLeft, shift: true): () =>
+            run(_seek(-longSeekMs)),
+        const SingleActivator(LogicalKeyboardKey.arrowRight, shift: true): () =>
+            run(_seek(longSeekMs)),
         const SingleActivator(LogicalKeyboardKey.keyF): () =>
             run(_hasFile ? widget.onFullscreen : null),
         const SingleActivator(LogicalKeyboardKey.keyM): () =>
@@ -241,108 +381,167 @@ class _RoomViewState extends State<RoomView> {
         const SingleActivator(LogicalKeyboardKey.escape): () => _sheet
             ? setState(() => _sheet = false)
             : run(_d.fullscreen ? widget.onFullscreen : null),
+        const CharacterActivator('?'): _showShortcuts,
       },
       child: Focus(
         autofocus: true,
-        child: ColoredBox(
-          color: WtColors.board,
-          child: LayoutBuilder(
-            builder: (context, box) {
-              final compact = box.maxWidth < wtCompactWidth;
-              final rail = !_d.fullscreen;
-              return Stack(
-                children: [
-                  Column(
-                    children: [
-                      if (!_d.fullscreen) _topBar(compact: compact),
-                      if (!_d.connected) _banner(),
-                      Expanded(
-                        child: Stack(
-                          children: [
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                Expanded(child: _stageArea()),
-                                if (rail && !compact)
-                                  _Rail(data: _d, onAdd: widget.onAddToQueue),
-                              ],
-                            ),
-                            if (rail && compact && _sheet) ...[
-                              Positioned.fill(
-                                child: GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onTap: () => setState(() => _sheet = false),
-                                  child: const ColoredBox(
-                                    color: Color(0x8C000000),
-                                  ),
+        child: MouseRegion(
+          cursor: _chromeHidden ? SystemMouseCursors.none : MouseCursor.defer,
+          onHover: (_) {
+            _pointerSeen = true;
+            _wake();
+          },
+          child: ColoredBox(
+            color: WtColors.board,
+            child: LayoutBuilder(
+              builder: (context, box) {
+                final compact = box.maxWidth < wtCompactWidth;
+                return Stack(
+                  children: [
+                    if (_d.fullscreen)
+                      _fullscreenLayout(compact: compact)
+                    else
+                      _windowLayout(compact: compact),
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      child: CompositedTransformFollower(
+                        link: _playLink,
+                        showWhenUnlinked: false,
+                        targetAnchor: Alignment.topCenter,
+                        followerAnchor: Alignment.bottomCenter,
+                        // 12 px above the dock: the play button sits 12 px below its top edge.
+                        offset: const Offset(0, -24),
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 160),
+                          switchInCurve: Curves.easeOutCubic,
+                          transitionBuilder: (child, animation) =>
+                              FadeTransition(
+                                opacity: animation,
+                                child: SlideTransition(
+                                  position: Tween(
+                                    begin: const Offset(0, 0.3),
+                                    end: Offset.zero,
+                                  ).animate(animation),
+                                  child: child,
                                 ),
                               ),
-                              Positioned(
-                                top: 0,
-                                right: 0,
-                                bottom: 0,
-                                child: DecoratedBox(
-                                  decoration: const BoxDecoration(
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Color(0x99000000),
-                                        blurRadius: 40,
-                                        spreadRadius: -10,
-                                      ),
-                                    ],
-                                  ),
-                                  child: _Rail(
-                                    data: _d,
-                                    onAdd: widget.onAddToQueue,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
+                          child: _toast && _d.pause != null && !_chromeHidden
+                              ? _Toast(
+                                  key: ValueKey(_d.pause!.serial),
+                                  notice: _d.pause!,
+                                  onResume: _d.connected ? widget.onPlay : null,
+                                )
+                              : const SizedBox.shrink(),
                         ),
-                      ),
-                      _dock(compact: compact),
-                    ],
-                  ),
-                  Positioned(
-                    left: 0,
-                    top: 0,
-                    child: CompositedTransformFollower(
-                      link: _playLink,
-                      showWhenUnlinked: false,
-                      targetAnchor: Alignment.topCenter,
-                      followerAnchor: Alignment.bottomCenter,
-                      // 12 px above the dock: the play button sits 12 px below its top edge.
-                      offset: const Offset(0, -24),
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 160),
-                        switchInCurve: Curves.easeOutCubic,
-                        transitionBuilder: (child, animation) => FadeTransition(
-                          opacity: animation,
-                          child: SlideTransition(
-                            position: Tween(
-                              begin: const Offset(0, 0.3),
-                              end: Offset.zero,
-                            ).animate(animation),
-                            child: child,
-                          ),
-                        ),
-                        child: _toast && _d.pause != null
-                            ? _Toast(
-                                key: ValueKey(_d.pause!.serial),
-                                notice: _d.pause!,
-                                onResume: _d.connected ? widget.onPlay : null,
-                              )
-                            : const SizedBox.shrink(),
                       ),
                     ),
-                  ),
-                ],
-              );
-            },
+                  ],
+                );
+              },
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _windowLayout({required bool compact}) => Column(
+    children: [
+      _topBar(compact: compact),
+      if (!_d.connected) _banner(),
+      Expanded(
+        child: Stack(
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: _stageArea()),
+                if (!compact) _Rail(data: _d, onAdd: widget.onAddToQueue),
+              ],
+            ),
+            if (compact && _sheet) ...[
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => setState(() => _sheet = false),
+                  child: const ColoredBox(color: Color(0x8C000000)),
+                ),
+              ),
+              Positioned(
+                top: 0,
+                right: 0,
+                bottom: 0,
+                child: DecoratedBox(
+                  decoration: const BoxDecoration(
+                    boxShadow: [
+                      BoxShadow(
+                        color: Color(0x99000000),
+                        blurRadius: 40,
+                        spreadRadius: -10,
+                      ),
+                    ],
+                  ),
+                  child: _Rail(data: _d, onAdd: widget.onAddToQueue),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      KeyedSubtree(key: roomDockKey, child: _dock(compact: compact)),
+    ],
+  );
+
+  /// The picture fills the screen; the dock and an exit button float over it and fade out
+  /// while the pointer rests.
+  Widget _fullscreenLayout({required bool compact}) {
+    final hidden = _chromeHidden;
+    Widget chrome(Widget child) => MouseRegion(
+      onEnter: (_) => _chromeHover(true),
+      onExit: (_) => _chromeHover(false),
+      child: IgnorePointer(
+        ignoring: hidden,
+        child: AnimatedOpacity(
+          opacity: hidden ? 0 : 1,
+          duration: const Duration(milliseconds: 200),
+          child: child,
+        ),
+      ),
+    );
+    return Column(
+      children: [
+        if (!_d.connected) _banner(),
+        Expanded(
+          child: Stack(
+            children: [
+              Positioned.fill(child: _stageArea()),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: chrome(
+                  KeyedSubtree(key: roomDockKey, child: _dock(compact: compact)),
+                ),
+              ),
+              Positioned(
+                top: 16,
+                right: 16,
+                child: chrome(
+                  WtButton(
+                    label: 'Exit fullscreen',
+                    icon: Icons.fullscreen_exit_rounded,
+                    style: WtButtonStyle.ghost,
+                    size: WtButtonSize.small,
+                    tooltip: 'Exit fullscreen (Esc)',
+                    onPressed: widget.onFullscreen,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -394,7 +593,7 @@ class _RoomViewState extends State<RoomView> {
             ),
           ),
           const SizedBox(width: 12),
-          WtKeyCaps(code: _d.room, size: WtKeySize.small),
+          _RoomCode(code: _d.room),
           const SizedBox(width: 4),
           WtTextButton(
             label: _copied ? 'Copied' : 'Copy invite',
@@ -403,12 +602,25 @@ class _RoomViewState extends State<RoomView> {
             onPressed: _copyInvite,
           ),
           const Spacer(),
-          Semantics(
-            liveRegion: true,
-            child: WtPill(
-              label: readyPillLabel(ready, total),
-              tone: allIn ? WtTone.live : WtTone.warn,
-              dot: allIn ? WtDotStyle.solid : WtDotStyle.ring,
+          if (!compact) ...[
+            WtTextButton(
+              label: 'Shortcuts',
+              icon: Icons.keyboard_rounded,
+              color: WtColors.tx2,
+              compact: true,
+              onPressed: _showShortcuts,
+            ),
+            const SizedBox(width: 8),
+          ],
+          Tooltip(
+            message: readyDetail(_d.people),
+            child: Semantics(
+              liveRegion: true,
+              child: WtPill(
+                label: readyPillLabel(ready, total),
+                tone: allIn ? WtTone.live : WtTone.warn,
+                dot: allIn ? WtDotStyle.solid : WtDotStyle.ring,
+              ),
             ),
           ),
           const SizedBox(width: 12),
@@ -474,7 +686,7 @@ class _RoomViewState extends State<RoomView> {
   Widget _stageArea() => WtBackdrop(
     color: WtColors.board,
     child: Padding(
-      padding: const EdgeInsets.all(WtSpace.window),
+      padding: EdgeInsets.all(_d.fullscreen ? 0 : WtSpace.window),
       child: LayoutBuilder(
         builder: (context, box) {
           final aspect = _hasFile ? stageAspect(_d.aspect) : 16 / 9;
@@ -495,10 +707,53 @@ class _RoomViewState extends State<RoomView> {
     ),
   );
 
+  /// The local-file or Jellyfin picker, whichever fits [source]; the file picker by default.
+  VoidCallback? _opener(MediaSource? source) =>
+      source == MediaSource.jellyfin && widget.onOpenJellyfin != null
+      ? widget.onOpenJellyfin
+      : widget.onOpenFile;
+
   Widget _stage() {
+    final error = _d.error;
+    if (error != null) {
+      return _StagePanel(
+        outline: WtColors.danger,
+        tile: const _GlowTile(
+          glow: Color(0x59FF6B6B),
+          child: Icon(
+            Icons.error_outline_rounded,
+            size: 32,
+            color: WtColors.danger,
+          ),
+        ),
+        title: "Couldn't play ${_d.fileName ?? 'your copy'}",
+        body: error,
+        actions: [
+          WtButton(
+            label: 'Try again',
+            icon: Icons.refresh_rounded,
+            onPressed: widget.onRetry,
+          ),
+          WtButton(
+            label: 'Choose another file',
+            icon: Icons.folder_open_rounded,
+            style: WtButtonStyle.ghost,
+            onPressed: _opener(_d.source),
+          ),
+        ],
+      );
+    }
+    if (_d.opening) {
+      return _StagePanel(
+        outline: WtColors.line,
+        tile: const _GlowTile(child: _Spinner()),
+        title: 'Opening your copy…',
+        body: _d.fileName ?? 'Checking the file.',
+        live: true,
+      );
+    }
     switch (_d.stage) {
       case StageMode.video:
-        final notice = _d.pause;
         return Stack(
           fit: StackFit.expand,
           children: [
@@ -506,39 +761,40 @@ class _RoomViewState extends State<RoomView> {
               borderRadius: BorderRadius.circular(10),
               child: ColoredBox(color: WtColors.board, child: widget.video),
             ),
-            if (notice != null && !_d.playing && !_toast)
-              Positioned(left: 12, top: 12, child: _Badge(notice: notice)),
+            ?_videoOverlay(),
           ],
         );
       case StageMode.empty:
         return _StagePanel(
           outline: WtColors.line,
-          tile: _GlowTile(
-            child: Icon(
-              _d.opening ? Icons.hourglass_top_rounded : Icons.add_rounded,
-              size: 32,
-              color: WtColors.pink,
-            ),
+          tile: const _GlowTile(
+            child: Icon(Icons.add_rounded, size: 32, color: WtColors.pink),
           ),
-          title: _d.opening
-              ? 'Checking your file…'
-              : 'Open a file to watch together',
+          title: 'Open a file to watch together',
           body: 'It plays from your disk. Everyone opens their own copy.',
-          action: WtButton(
-            label: 'Open file',
-            icon: Icons.folder_open_rounded,
-            onPressed: _d.opening ? null : widget.onOpenFile,
-          ),
-          alt: widget.onOpenJellyfin == null
-              ? null
-              : WtButton(
-                  label: 'Or pick from Jellyfin',
-                  icon: Icons.dns_rounded,
-                  style: WtButtonStyle.ghost,
-                  onPressed: _d.opening ? null : widget.onOpenJellyfin,
-                ),
+          actions: [
+            WtButton(
+              label: 'Open file',
+              icon: Icons.folder_open_rounded,
+              onPressed: widget.onOpenFile,
+            ),
+            if (widget.onOpenJellyfin != null)
+              WtButton(
+                label: 'Or pick from Jellyfin',
+                icon: Icons.dns_rounded,
+                style: WtButtonStyle.ghost,
+                onPressed: widget.onOpenJellyfin,
+              ),
+          ],
         );
       case StageMode.waiting:
+        final room = _d.nowPlaying;
+        final roomFile = room == null
+            ? "the room's file"
+            : room.detail.isEmpty
+            ? room.title
+            : '${room.title} (${room.detail})';
+        final jellyfin = _d.roomSource == MediaSource.jellyfin;
         return _StagePanel(
           outline: WtColors.yellow,
           tile: const WtDashed(
@@ -554,28 +810,143 @@ class _RoomViewState extends State<RoomView> {
               ),
             ),
           ),
-          title: "Waiting for the host's file",
+          title: _d.mismatch
+              ? "That's not the room's file"
+              : "Open the room's file to join",
           body: _d.mismatch
-              ? "The file you opened isn't the one the room is playing."
-              : 'Open the same file the host is playing.',
-          action: WtButton(
-            label: _d.mismatch ? 'Open a different file' : 'Open file',
-            icon: Icons.folder_open_rounded,
-            style: WtButtonStyle.ghost,
-            onPressed: _d.opening ? null : widget.onOpenFile,
-          ),
+              ? 'You opened ${_d.fileName ?? 'a different file'}. The room is playing $roomFile.'
+              : 'The room is playing $roomFile. Open your own copy of it.',
+          actions: [
+            WtButton(
+              label: 'Open that file…',
+              icon: jellyfin ? Icons.dns_rounded : Icons.folder_open_rounded,
+              onPressed: _opener(_d.roomSource),
+            ),
+            if (jellyfin && widget.onOpenJellyfin != null)
+              WtButton(
+                label: 'Open a local file',
+                icon: Icons.folder_open_rounded,
+                style: WtButtonStyle.ghost,
+                onPressed: widget.onOpenFile,
+              )
+            else if (!jellyfin && widget.onOpenJellyfin != null)
+              WtButton(
+                label: 'Or pick from Jellyfin',
+                icon: Icons.dns_rounded,
+                style: WtButtonStyle.ghost,
+                onPressed: widget.onOpenJellyfin,
+              ),
+          ],
         );
     }
   }
 
+  /// Buffering, ended or paused, over the picture; nothing while it plays.
+  Widget? _videoOverlay() {
+    if (_d.buffering) {
+      return Center(
+        child: _StageNote(
+          lead: const _Spinner(),
+          title: 'Buffering…',
+          body: _d.fileName,
+        ),
+      );
+    }
+    if (_d.ended) {
+      final next = _d.upNext.isEmpty ? null : _d.upNext.first.title;
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          const ColoredBox(color: Color(0x99000000)),
+          Center(
+            child: _StageNote(
+              lead: const Icon(
+                Icons.check_circle_rounded,
+                size: 28,
+                color: WtColors.cyan,
+              ),
+              title: 'Finished',
+              body: next == null ? _d.fileName : 'Up next: $next',
+              actions: [
+                WtButton(
+                  label: 'Replay',
+                  icon: Icons.replay_rounded,
+                  size: WtButtonSize.small,
+                  style: next == null
+                      ? WtButtonStyle.primary
+                      : WtButtonStyle.ghost,
+                  onPressed: _d.connected ? widget.onReplay : null,
+                ),
+                if (next != null)
+                  WtButton(
+                    label: 'Play next',
+                    icon: Icons.skip_next_rounded,
+                    size: WtButtonSize.small,
+                    onPressed: _d.connected ? widget.onPlayNext : null,
+                  ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+    if (!_d.playing && !_toast) {
+      final who = _d.waitingFor;
+      final idle = _d.nowPlaying == null;
+      final at = fmtTime(_d.positionMs);
+      final (title, body) = switch (who) {
+        'You' when idle => (
+          'Nobody has pressed play yet',
+          'Press play to start it for everyone.',
+        ),
+        'You' => (
+          'You paused for everyone',
+          'Paused at $at. Press play to carry on.',
+        ),
+        final name? => (
+          'Waiting for $name to press play',
+          idle
+              ? 'Anyone can start it once everyone is ready.'
+              : 'Paused at $at. Anyone can press play.',
+        ),
+        null when idle => (
+          'Nobody has pressed play yet',
+          'Press play to start it for everyone.',
+        ),
+        null => (
+          'Waiting for someone to press play',
+          'Paused at $at. Anyone can press play.',
+        ),
+      };
+      return Center(
+        child: _StageNote(
+          lead: who == null || who == 'You'
+              ? const Icon(
+                  Icons.pause_circle_rounded,
+                  size: 28,
+                  color: WtColors.tx2,
+                )
+              : WtAvatar(id: who, name: who, size: 32),
+          title: title,
+          body: body,
+          actions: [
+            WtButton(
+              label: 'Play for everyone',
+              icon: Icons.play_arrow_rounded,
+              size: WtButtonSize.small,
+              onPressed: _playPause,
+            ),
+          ],
+        ),
+      );
+    }
+    return null;
+  }
+
   /// [compact] drops the now-playing title (it is in the queue sheet) so the scrubber keeps its width.
   Widget _dock({required bool compact}) {
-    const timeStyle = TextStyle(
-      fontSize: 14,
-      fontWeight: FontWeight.w800,
-      color: WtColors.text,
-      fontFeatures: [FontFeature.tabularFigures()],
-    );
+    final off = _offReason;
+    String tip(String what) => off == null ? what : '$what · $off';
     return Container(
       height: 88,
       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -588,53 +959,30 @@ class _RoomViewState extends State<RoomView> {
           if (!compact) ...[
             Flexible(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 240),
-                child: Opacity(
-                  opacity: _hasFile ? 1 : 0.4,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Now playing',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: WtColors.tx3,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      WtMidText(
-                        _d.fileName ?? 'No file open',
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w800,
-                          color: WtColors.text,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                constraints: const BoxConstraints(maxWidth: 220),
+                child: _nowPlaying(),
               ),
             ),
             const SizedBox(width: 16),
           ],
-          _SkipButton(back: true, onTap: _seek(-seekStepMs)),
-          const SizedBox(width: 12),
+          _SkipChip(
+            label: '−10s',
+            tooltip: tip('Back 10 seconds'),
+            onTap: _seek(-skipMs),
+          ),
+          const SizedBox(width: 10),
           CompositedTransformTarget(
             link: _playLink,
             child: _PlayButton(playing: _d.playing, onTap: _playPause),
           ),
-          const SizedBox(width: 12),
-          _SkipButton(back: false, onTap: _seek(seekStepMs)),
-          const SizedBox(width: 16),
-          Opacity(
-            opacity: _hasFile ? 1 : 0.4,
-            child: Text(
-              '${fmtTime(_d.positionMs)} / ${fmtTime(_d.durationMs)}',
-              style: timeStyle,
-            ),
+          const SizedBox(width: 10),
+          _SkipChip(
+            label: '+10s',
+            tooltip: tip('Ahead 10 seconds'),
+            onTap: _seek(skipMs),
           ),
+          const SizedBox(width: 16),
+          _timeBlock(),
           const SizedBox(width: 16),
           Expanded(
             child: Opacity(
@@ -648,10 +996,21 @@ class _RoomViewState extends State<RoomView> {
             ),
           ),
           const SizedBox(width: 16),
-          WtIconButton(
-            icon: _d.muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
-            tooltip: _d.muted ? 'Unmute (M)' : 'Mute (M)',
-            onPressed: _hasFile ? widget.onToggleMute : null,
+          if (_hasFile &&
+              TrackMenu.hasChoice(_d.audioTracks, _d.subtitleTracks)) ...[
+            TrackMenu(
+              audio: _d.audioTracks,
+              subtitles: _d.subtitleTracks,
+              onAudio: widget.onAudioTrack,
+              onSubtitle: widget.onSubtitleTrack,
+            ),
+            const SizedBox(width: 8),
+          ],
+          VolumeControl(
+            volume: _d.volume,
+            muted: _d.muted,
+            onToggleMute: _hasFile ? widget.onToggleMute : null,
+            onVolume: _hasFile ? widget.onVolume : null,
           ),
           const SizedBox(width: 8),
           WtIconButton(
@@ -661,8 +1020,95 @@ class _RoomViewState extends State<RoomView> {
             tooltip: _d.fullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)',
             onPressed: _hasFile ? widget.onFullscreen : null,
           ),
+          const SizedBox(width: 8),
+          WtIconButton(
+            icon: Icons.question_mark_rounded,
+            tooltip: 'Keyboard shortcuts (?)',
+            onPressed: _showShortcuts,
+          ),
         ],
       ),
+    );
+  }
+
+  Widget _nowPlaying() => Opacity(
+    opacity: _hasFile ? 1 : 0.4,
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Text(
+              'Now playing',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: WtColors.tx3,
+              ),
+            ),
+            if (_d.source case final source?) ...[
+              const SizedBox(width: 8),
+              _SourceChip(source: source),
+            ],
+          ],
+        ),
+        const SizedBox(height: 2),
+        WtMidText(
+          _d.fileName ?? 'No file open',
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+            color: WtColors.text,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  /// Position and length, with the sync state and a non-1× room speed under it.
+  Widget _timeBlock() {
+    final sync = _hasFile ? _d.sync : null;
+    final speed = _hasFile && _d.rate != 1;
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Opacity(
+          opacity: _hasFile ? 1 : 0.4,
+          child: Text(
+            '${fmtTime(_d.positionMs)} / ${fmtTime(_d.durationMs)}',
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+              color: WtColors.text,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+        ),
+        if (sync != null || speed) ...[
+          const SizedBox(height: 4),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (sync != null) _SyncTag(sync: sync, driftMs: _d.driftMs),
+              if (sync != null && speed) const SizedBox(width: 8),
+              if (speed)
+                Tooltip(
+                  message: 'Room speed',
+                  child: Text(
+                    fmtSpeed(_d.rate),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                      color: WtColors.pink,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 }
@@ -694,10 +1140,14 @@ class _PlayButton extends StatelessWidget {
             border: Border.all(color: const Color(0x3DFFFFFF), width: 2),
           ),
           child: Center(
-            child: Icon(
-              playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-              size: 34,
-              color: WtColors.text,
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 120),
+              child: Icon(
+                playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                key: ValueKey(playing),
+                size: 38,
+                color: WtColors.text,
+              ),
             ),
           ),
         ),
@@ -706,39 +1156,81 @@ class _PlayButton extends StatelessWidget {
   );
 }
 
-class _SkipButton extends StatelessWidget {
-  const _SkipButton({required this.back, required this.onTap});
-  final bool back;
+/// `−10s` / `+10s`: quiet, labelled, so the play button stays the one loud control.
+class _SkipChip extends StatelessWidget {
+  const _SkipChip({
+    required this.label,
+    required this.tooltip,
+    required this.onTap,
+  });
+  final String label;
+  final String tooltip;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) => WtTap(
     onTap: onTap,
-    tooltip: back ? 'Back 10s (←)' : 'Ahead 10s (→)',
-    semanticLabel: back ? 'Back 10s' : 'Ahead 10s',
+    tooltip: tooltip,
+    semanticLabel: tooltip,
     child: Container(
-      height: 48,
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(WtRadius.control),
+        border: Border.all(color: WtColors.line, width: 2),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w900,
+          color: WtColors.tx2,
+          fontFeatures: [FontFeature.tabularFigures()],
+        ),
+      ),
+    ),
+  );
+}
+
+/// The room code as one labelled chip. Key caps are for keys (the shortcut sheet), not codes.
+class _RoomCode extends StatelessWidget {
+  const _RoomCode({required this.code});
+  final String code;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'Room code ${code.toUpperCase().split('').join(' ')}',
+    excludeSemantics: true,
+    child: Container(
+      height: 32,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
         color: WtColors.s1,
-        borderRadius: BorderRadius.circular(WtRadius.control),
+        borderRadius: BorderRadius.circular(WtRadius.pill),
         border: Border.all(color: WtColors.line, width: 2),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            back ? Icons.replay_rounded : Icons.forward_rounded,
-            size: 20,
-            color: WtColors.text,
-          ),
-          const SizedBox(width: 4),
           const Text(
-            '10',
+            'ROOM',
             style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1,
+              color: WtColors.tx3,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            codeGroups(code).join('-').toUpperCase(),
+            style: const TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w900,
+              letterSpacing: 1.2,
               color: WtColors.text,
+              fontFeatures: [FontFeature.tabularFigures()],
             ),
           ),
         ],
@@ -747,142 +1239,172 @@ class _SkipButton extends StatelessWidget {
   );
 }
 
-/// Thick seek bar: 8 px track, buffered hint, pink fill, 14 px handle, 44 px hit area.
-class WtScrubber extends StatefulWidget {
-  const WtScrubber({
-    super.key,
-    required this.positionMs,
-    required this.durationMs,
-    required this.bufferedMs,
-    this.onSeek,
-  });
-  final int positionMs;
-  final int durationMs;
-  final int bufferedMs;
-  final ValueChanged<int>? onSeek;
-
-  @override
-  State<WtScrubber> createState() => _WtScrubberState();
-}
-
-class _WtScrubberState extends State<WtScrubber> {
-  double? _drag;
-  bool _focused = false;
-
-  int get _total => widget.durationMs;
-  bool get _enabled => widget.onSeek != null && _total > 0;
-
-  double _fraction(double dx, double width) =>
-      width <= 0 ? 0 : (dx / width).clamp(0.0, 1.0);
-
-  void _seekFraction(double f) => widget.onSeek?.call((f * _total).round());
-
-  void _step(int delta) =>
-      widget.onSeek?.call((widget.positionMs + delta).clamp(0, _total));
+class _SourceChip extends StatelessWidget {
+  const _SourceChip({required this.source});
+  final MediaSource source;
 
   @override
   Widget build(BuildContext context) {
-    final pos = math.min(math.max(0, widget.positionMs), math.max(0, _total));
-    final played = _drag ?? (_total > 0 ? pos / _total : 0.0);
-    final buffered = _total > 0
-        ? (widget.bufferedMs / _total).clamp(0.0, 1.0)
-        : 0.0;
-    return Semantics(
-      slider: true,
-      label: 'Seek',
-      enabled: _enabled,
-      value: fmtTimeWords(pos),
-      increasedValue: fmtTimeWords(math.min(_total, pos + seekStepMs)),
-      decreasedValue: fmtTimeWords(math.max(0, pos - seekStepMs)),
-      onIncrease: _enabled ? () => _step(seekStepMs) : null,
-      onDecrease: _enabled ? () => _step(-seekStepMs) : null,
-      child: FocusableActionDetector(
-        enabled: _enabled,
-        mouseCursor: _enabled ? SystemMouseCursors.click : MouseCursor.defer,
-        onShowFocusHighlight: (v) => setState(() => _focused = v),
-        child: LayoutBuilder(
-          builder: (context, box) {
-            final width = box.maxWidth;
-            return GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTapUp: _enabled
-                  ? (d) => _seekFraction(_fraction(d.localPosition.dx, width))
-                  : null,
-              onHorizontalDragStart: _enabled
-                  ? (d) => setState(
-                      () => _drag = _fraction(d.localPosition.dx, width),
-                    )
-                  : null,
-              onHorizontalDragUpdate: _enabled
-                  ? (d) => setState(
-                      () => _drag = _fraction(d.localPosition.dx, width),
-                    )
-                  : null,
-              onHorizontalDragEnd: _enabled
-                  ? (_) {
-                      final f = _drag;
-                      setState(() => _drag = null);
-                      if (f != null) _seekFraction(f);
-                    }
-                  : null,
-              onHorizontalDragCancel: () => setState(() => _drag = null),
-              child: WtFocusRing(
-                show: _focused && _enabled,
-                radius: 8,
-                child: SizedBox(
-                  height: 44,
-                  width: double.infinity,
-                  child: CustomPaint(
-                    painter: _ScrubPainter(played: played, buffered: buffered),
-                  ),
-                ),
-              ),
-            );
-          },
+    final jellyfin = source == MediaSource.jellyfin;
+    final color = jellyfin ? WtColors.pink : WtColors.tx3;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: jellyfin ? WtColors.pink : WtColors.line,
+          width: 1.5,
+        ),
+      ),
+      child: Text(
+        jellyfin ? 'Jellyfin' : 'Local file',
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          color: color,
         ),
       ),
     );
   }
 }
 
-class _ScrubPainter extends CustomPainter {
-  _ScrubPainter({required this.played, required this.buffered});
-  final double played;
-  final double buffered;
+class _SyncTag extends StatelessWidget {
+  const _SyncTag({required this.sync, required this.driftMs});
+  final SyncState sync;
+  final double? driftMs;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    const track = 8.0;
-    const thumb = 14.0;
-    final left = thumb / 2;
-    final width = size.width - thumb;
-    final top = (size.height - track) / 2;
-    RRect bar(double fraction) => RRect.fromLTRBR(
-      left,
-      top,
-      left + width * fraction,
-      top + track,
-      const Radius.circular(track / 2),
+  Widget build(BuildContext context) {
+    final inSync = sync == SyncState.inSync;
+    final color = inSync ? WtColors.cyan : WtColors.yellow;
+    final drift = driftMs;
+    return Tooltip(
+      message: drift == null
+          ? (inSync ? 'Matching the room' : 'Catching up with the room')
+          : inSync
+          ? 'Within ${drift.abs().round()} ms of the room'
+          : '${(drift.abs() / 1000).toStringAsFixed(1)} s '
+                '${drift < 0 ? 'behind' : 'ahead of'} the room, catching up',
+      child: Semantics(
+        liveRegion: true,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            WtDot(color: color, style: WtDotStyle.solid),
+            const SizedBox(width: 6),
+            Text(
+              inSync ? 'In sync' : 'Adjusting',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
-    canvas
-      ..drawRRect(bar(1), Paint()..color = const Color(0x1AFFFFFF))
-      ..drawRRect(bar(buffered), Paint()..color = const Color(0x38FFFFFF))
-      ..drawRRect(bar(played), Paint()..color = WtColors.pink);
-    final center = Offset(left + width * played, size.height / 2);
-    canvas
-      ..drawCircle(
-        center.translate(0, 2),
-        thumb / 2 + 1,
-        Paint()
-          ..color = const Color(0x66000000)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
-      )
-      ..drawCircle(center, thumb / 2, Paint()..color = Colors.white);
   }
+}
+
+class _Spinner extends StatelessWidget {
+  const _Spinner();
 
   @override
-  bool shouldRepaint(covariant _ScrubPainter old) =>
-      old.played != played || old.buffered != buffered;
+  Widget build(BuildContext context) => const SizedBox(
+    width: 28,
+    height: 28,
+    child: CircularProgressIndicator(
+      strokeWidth: 3.5,
+      strokeCap: StrokeCap.round,
+      color: WtColors.pink,
+      backgroundColor: Color(0x33FF5FAE),
+    ),
+  );
+}
+
+/// A card over the picture: buffering, finished, paused.
+class _StageNote extends StatelessWidget {
+  const _StageNote({
+    required this.lead,
+    required this.title,
+    this.body,
+    this.actions = const [],
+  });
+  final Widget lead;
+  final String title;
+  final String? body;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    liveRegion: true,
+    child: Container(
+      constraints: const BoxConstraints(maxWidth: 440),
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+      decoration: BoxDecoration(
+        color: const Color(0xEB140A20),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: WtColors.line, width: 2),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x80000000),
+            offset: Offset(0, 12),
+            blurRadius: 30,
+            spreadRadius: -10,
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              lead,
+              const SizedBox(width: 14),
+              Flexible(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        height: 1.25,
+                        fontWeight: FontWeight.w900,
+                        color: WtColors.text,
+                      ),
+                    ),
+                    if (body case final b?) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        b,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: WtColors.tx3,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (actions.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Wrap(spacing: 10, runSpacing: 10, children: actions),
+          ],
+        ],
+      ),
+    ),
+  );
 }
 
 class _StagePanel extends StatelessWidget {
@@ -891,52 +1413,66 @@ class _StagePanel extends StatelessWidget {
     required this.tile,
     required this.title,
     required this.body,
-    required this.action,
-    this.alt,
+    this.actions = const [],
+    this.live = false,
   });
   final Color outline;
   final Widget tile;
   final String title;
   final String body;
-  final Widget action;
 
-  /// A second, quieter way to get the same thing (e.g. Jellyfin next to a local file).
-  final Widget? alt;
+  /// The primary action first, then quieter alternatives.
+  final List<Widget> actions;
+
+  /// Announce the panel to screen readers when it appears (loading states).
+  final bool live;
 
   @override
-  Widget build(BuildContext context) => Container(
-    decoration: BoxDecoration(
-      color: WtColors.plum,
-      borderRadius: BorderRadius.circular(10),
-      border: Border.all(color: outline, width: 2),
-    ),
-    child: Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            tile,
-            const SizedBox(height: 18),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              body,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: WtColors.tx3,
+  Widget build(BuildContext context) => Semantics(
+    liveRegion: live,
+    child: Container(
+      decoration: BoxDecoration(
+        color: WtColors.plum,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: outline, width: 2),
+      ),
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              tile,
+              const SizedBox(height: 18),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleLarge,
               ),
-            ),
-            const SizedBox(height: 20),
-            action,
-            if (alt != null) ...[const SizedBox(height: 10), alt!],
-          ],
+              const SizedBox(height: 6),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 460),
+                child: Text(
+                  body,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: WtColors.tx3,
+                  ),
+                ),
+              ),
+              if (actions.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: actions,
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     ),
@@ -944,8 +1480,9 @@ class _StagePanel extends StatelessWidget {
 }
 
 class _GlowTile extends StatelessWidget {
-  const _GlowTile({required this.child});
+  const _GlowTile({required this.child, this.glow = const Color(0x59D93583)});
   final Widget child;
+  final Color glow;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -955,51 +1492,10 @@ class _GlowTile extends StatelessWidget {
       color: WtColors.s1,
       borderRadius: BorderRadius.circular(20),
       border: Border.all(color: WtColors.line, width: 2),
-      boxShadow: const [
-        BoxShadow(color: Color(0x59D93583), blurRadius: 40, spreadRadius: 4),
-      ],
+      boxShadow: [BoxShadow(color: glow, blurRadius: 40, spreadRadius: 4)],
     ),
     child: Center(child: child),
   );
-}
-
-class _Badge extends StatelessWidget {
-  const _Badge({required this.notice});
-  final PauseNotice notice;
-
-  @override
-  Widget build(BuildContext context) {
-    final by = notice.by;
-    return Container(
-      height: 36,
-      padding: EdgeInsets.only(left: by == null ? 12 : 4, right: 14),
-      decoration: BoxDecoration(
-        color: const Color(0xEB140A20),
-        borderRadius: BorderRadius.circular(WtRadius.pill),
-        border: Border.all(color: WtColors.line, width: 2),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (by == null)
-            const Icon(Icons.pause_rounded, size: 18, color: WtColors.tx2)
-          else
-            WtAvatar(id: by, name: by, size: 26, ring: const Color(0xEB140A20)),
-          const SizedBox(width: 8),
-          Text(
-            by == null
-                ? 'Paused · ${fmtTime(notice.positionMs)}'
-                : 'Paused by ${by == 'You' ? 'you' : by} · ${fmtTime(notice.positionMs)}',
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w800,
-              color: WtColors.text,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _Toast extends StatelessWidget {

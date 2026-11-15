@@ -228,6 +228,7 @@ class WtIconButton extends StatelessWidget {
     required this.onPressed,
     this.size = 44,
     this.background = WtColors.s1,
+    this.iconColor = WtColors.text,
     this.semanticLabel,
     this.dimWhenDisabled = true,
   });
@@ -236,6 +237,7 @@ class WtIconButton extends StatelessWidget {
   final VoidCallback? onPressed;
   final double size;
   final Color background;
+  final Color iconColor;
   final String? semanticLabel;
   final bool dimWhenDisabled;
 
@@ -254,7 +256,7 @@ class WtIconButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(WtRadius.control),
         border: Border.all(color: WtColors.line, width: 2),
       ),
-      child: Icon(icon, size: 22, color: WtColors.text),
+      child: Icon(icon, size: 22, color: iconColor),
     ),
   );
 }

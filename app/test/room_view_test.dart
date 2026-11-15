@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watch_together/format.dart';
+import 'package:watch_together/room_controls.dart';
 import 'package:watch_together/room_view.dart';
 import 'package:watch_together/theme.dart';
 import 'package:watch_together/widgets/button.dart';
@@ -27,6 +28,7 @@ RoomViewData video({
   bool playing = true,
   List<RoomPerson> people = crowd,
   PauseNotice? pause,
+  String? waitingFor,
 }) => RoomViewData(
   room: roomCode,
   title: "Mika's room",
@@ -42,6 +44,7 @@ RoomViewData video({
   bufferedMs: 900000,
   playing: playing,
   pause: pause,
+  waitingFor: waitingFor,
 );
 
 const RoomViewData empty = RoomViewData(
@@ -96,9 +99,16 @@ void main() {
     await tester.pump();
   }
 
+  /// Dock tooltips carry their disabled reason (`Back 10 seconds · open a file first`), so match on
+  /// the prefix rather than the whole string.
   WtTap tapFor(WidgetTester tester, String tooltip) => tester.widget<WtTap>(
     find
-        .ancestor(of: find.byTooltip(tooltip), matching: find.byType(WtTap))
+        .ancestor(
+          of: find.byWidgetPredicate(
+            (w) => w is Tooltip && (w.message ?? '').startsWith(tooltip),
+          ),
+          matching: find.byType(WtTap),
+        )
         .first,
   );
 
@@ -257,17 +267,32 @@ void main() {
     expect(find.text('Open file'), findsOneWidget);
     expect(find.text('Nothing queued'), findsOneWidget);
     expect(tapFor(tester, 'Play (Space)').onTap, isNull);
-    expect(tapFor(tester, 'Back 10s (←)').onTap, isNull);
+    expect(tapFor(tester, 'Back 10 seconds').onTap, isNull);
     expect(tapFor(tester, 'Fullscreen (F)').onTap, isNull);
   });
 
-  testWidgets('waiting stage when the room plays another file', (tester) async {
+  testWidgets('waiting stage says the room has another file', (tester) async {
     useWindow(tester, desktopSizes.first);
     await pumpRoom(
       tester,
       const RoomViewData(room: roomCode, stage: StageMode.waiting),
     );
-    expect(find.text("Waiting for the host's file"), findsOneWidget);
+    expect(find.text("Open the room's file to join"), findsOneWidget);
+    expect(find.text('Open that file…'), findsOneWidget);
+  });
+
+  testWidgets('a paused room names who it waits for', (tester) async {
+    useWindow(tester, desktopSizes.first);
+    await pumpRoom(
+      tester,
+      video(
+        playing: false,
+        waitingFor: 'Mika',
+        pause: const PauseNotice(serial: 1, positionMs: 724000, by: 'Mika'),
+      ),
+    );
+    await tester.pump(const Duration(seconds: 4));
+    expect(find.text('Waiting for Mika to press play'), findsOneWidget);
   });
 
   testWidgets('disconnected: banner, controls off, room still visible', (
@@ -284,7 +309,7 @@ void main() {
       findsWidgets,
     );
     expect(tapFor(tester, 'Pause (Space)').onTap, isNull);
-    expect(tapFor(tester, 'Ahead 10s (→)').onTap, isNull);
+    expect(tapFor(tester, 'Ahead 10 seconds').onTap, isNull);
     handle.dispose(); // must happen inside the test body, not in a tearDown
   });
 
@@ -308,7 +333,7 @@ void main() {
     ]) {
       await tester.sendKeyEvent(key);
     }
-    expect(calls, ['pause', 'seek -10000', 'seek 10000', 'full', 'mute']);
+    expect(calls, ['pause', 'seek -5000', 'seek 5000', 'full', 'mute']);
   });
 
   testWidgets('scrubber is a slider for assistive tech', (tester) async {
@@ -355,7 +380,8 @@ void main() {
       find.textContaining('paused for everyone', findRichText: true),
       findsNothing,
     );
-    expect(find.text('Paused by Mika · 12:04'), findsOneWidget);
+    // Once the toast is gone the stage carries it: who it waits on, and that play is open to all.
+    expect(find.textContaining('Anyone can press play'), findsOneWidget);
   });
 
   testWidgets('the empty stage offers Jellyfin only when it can be opened', (

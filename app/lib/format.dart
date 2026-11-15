@@ -23,6 +23,45 @@ String fmtTime(int ms) {
   return h > 0 ? '$h:${m.toString().padLeft(2, '0')}:$ss' : '$m:$ss';
 }
 
+/// Time left, `-12:04` style.
+String fmtRemaining(int positionMs, int durationMs) =>
+    '-${fmtTime(durationMs - positionMs)}';
+
+/// The error card's sentence for a failed open or a player error. Stream URLs carry the viewer's
+/// token, so the raw text is never shown.
+String playerErrorReason(String raw) {
+  final s = raw.toLowerCase();
+  final status = RegExp(r'\b(4\d\d|5\d\d)\b').firstMatch(raw)?.group(1);
+  if (status == '401' || status == '403') {
+    return 'The server refused the stream (HTTP $status). Sign in to Jellyfin again.';
+  }
+  if (status != null && s.contains('http')) {
+    return 'The server answered HTTP $status. The item may have moved, or the link expired.';
+  }
+  if (s.contains('no such file') ||
+      s.contains('not found') ||
+      s.contains('cannot open file') ||
+      s.contains('errno = 2')) {
+    return 'The file is missing. It may have been moved, renamed or deleted.';
+  }
+  if (s.contains('codec') ||
+      s.contains('decoder') ||
+      s.contains('recognize file format') ||
+      s.contains('unsupported')) {
+    return "This file uses a format or codec the player can't decode.";
+  }
+  if (s.contains('tcp:') ||
+      s.contains('connection') ||
+      s.contains('timed out') ||
+      s.contains('resolve')) {
+    return "Couldn't reach the server that streams this item.";
+  }
+  if (s.contains('permission denied') || s.contains('errno = 13')) {
+    return "The file can't be read: permission denied.";
+  }
+  return "The player couldn't open this.";
+}
+
 /// Spoken form for the seek slider: `12 minutes 4 seconds`.
 String fmtTimeWords(int ms) {
   final s = (ms < 0 ? 0 : ms) ~/ 1000;

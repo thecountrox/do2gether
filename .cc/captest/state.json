@@ -1,0 +1,13 @@
+{
+ "phase": "failed",
+ "batch": 3,
+ "turn": 10,
+ "last_tool": "Bash",
+ "last_text": "",
+ "cost_usd": 0.1823,
+ "session_id": "e09db8d7-a1d1-444a-9c2d-2d484f346a47",
+ "result": "still hitting the turn cap after 3 batches",
+ "name": "captest",
+ "updated": 1794760291,
+ "subtype": "error_max_turns"
+}

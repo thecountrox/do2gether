@@ -1,0 +1,13 @@
+{
+ "phase": "done",
+ "batch": 1,
+ "turn": 0,
+ "last_tool": null,
+ "last_text": "SMOKE OK",
+ "cost_usd": 0.1337,
+ "session_id": "aad391f6-cacd-4fdd-b761-e38a8b416b2c",
+ "result": "SMOKE OK",
+ "name": "smoke",
+ "updated": 1794760244,
+ "subtype": "success"
+}

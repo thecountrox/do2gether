@@ -11,6 +11,7 @@ import 'local_copy.dart';
 import 'player.dart';
 import 'protocol.dart';
 import 'room_client.dart';
+import 'room_controls.dart' show TrackOption;
 import 'room_view.dart';
 import 'theme.dart';
 import 'widgets/button.dart';
@@ -20,6 +21,19 @@ const Duration reportEvery = Duration(seconds: 5);
 
 /// A pause we sent within this window is credited to "You" when the paused anchor arrives.
 const Duration ownPauseWindow = Duration(seconds: 2);
+
+/// The volume level outlives a room for the rest of the app session; mute does not.
+double _sessionVolume = 100;
+
+/// The copy we last tried to open: named on the error card and opened again by Try again.
+typedef _Attempt = ({
+  String name,
+  MediaSource source,
+  Future<void> Function() open,
+});
+
+MediaSource _sourceOf(String ref) =>
+    ref.startsWith('jellyfin:') ? MediaSource.jellyfin : MediaSource.local;
 
 class RoomScreen extends StatefulWidget {
   const RoomScreen({
@@ -64,7 +78,17 @@ class _RoomScreenState extends State<RoomScreen> {
   bool _clockWasReady = false;
   bool _opening = false;
   bool _muted = false;
+  double _volume = _sessionVolume;
   bool _fullscreen = false;
+
+  _Attempt? _attempt;
+
+  /// Opening threw (hashing, a missing file); shown instead of the stage.
+  String? _openError;
+
+  /// The last error the player logged for the open copy; fatal only while nothing loaded.
+  String? _playerError;
+  final List<StreamSubscription<Object>> _subs = [];
 
   /// Reconnect bookkeeping: RoomClient is one socket, so a drop means a fresh client.
   bool _joinedOnce = false;
@@ -87,6 +111,20 @@ class _RoomScreenState extends State<RoomScreen> {
     _client = _connect(widget.clientId);
     _pollTimer = Timer.periodic(pollEvery, (_) => _poll());
     _reportTimer = Timer.periodic(reportEvery, (_) => _report());
+    final stream = _player.player.stream;
+    void refresh(Object _) {
+      if (mounted) setState(() {});
+    }
+
+    _subs.addAll([
+      stream.error.listen((e) {
+        if (mounted) setState(() => _playerError = e);
+      }),
+      stream.buffering.listen(refresh),
+      stream.completed.listen(refresh),
+      stream.tracks.listen(refresh),
+    ]);
+    _player.player.setVolume(_volume);
     final initial = widget.initialCopy;
     if (initial != null) {
       initial.isRemote ? _openRemote(initial) : _openPath(initial.path);
@@ -98,6 +136,9 @@ class _RoomScreenState extends State<RoomScreen> {
     _pollTimer.cancel();
     _reportTimer.cancel();
     _retryTimer?.cancel();
+    for (final s in _subs) {
+      s.cancel();
+    }
     _client.close();
     _player.dispose();
     if (_fullscreen) defaultExitNativeFullscreen();
@@ -156,6 +197,7 @@ class _RoomScreenState extends State<RoomScreen> {
           _rev = snapshot.rev;
           _setAnchor(snapshot.playback);
           _queue = snapshot.queue;
+          _learnTitles();
           _meta = snapshot.meta ?? _meta;
           _members
             ..clear()
@@ -167,6 +209,7 @@ class _RoomScreenState extends State<RoomScreen> {
           _rev = state.rev;
           _setAnchor(state.playback);
           _queue = state.queue;
+          _learnTitles();
           _meta = state.meta ?? _meta;
         });
         _apply();
@@ -181,6 +224,20 @@ class _RoomScreenState extends State<RoomScreen> {
         ).showSnackBar(SnackBar(content: Text(message)));
       default:
         break;
+    }
+  }
+
+  /// Queue rows carry the title they were added with; keep it so the item stays named once it
+  /// leaves the queue and plays (the waiting card names the room's file).
+  void _learnTitles() {
+    for (final q in _queue) {
+      final title = q.title;
+      if (title != null) {
+        _known.putIfAbsent(
+          q.itemRef,
+          () => (name: title, durationMs: q.durationMs),
+        );
+      }
     }
   }
 
@@ -234,36 +291,59 @@ class _RoomScreenState extends State<RoomScreen> {
     await _openPath(file.path);
   }
 
-  Future<void> _openPath(String path) =>
-      _open(() => _player.open(path), name: baseName(path));
+  Future<void> _openPath(String path) => _open(
+    () => _player.open(path),
+    name: baseName(path),
+    source: MediaSource.local,
+  );
 
   /// A remote copy streams as-is under the ref it was picked with; nothing is hashed.
   Future<void> _openRemote(LocalCopy copy) => _open(
     () => _player.openSource(uri: copy.path, itemRef: copy.itemRef),
     name: copy.name,
+    source: _sourceOf(copy.itemRef),
     durationMs: copy.duration?.inMilliseconds,
   );
 
   Future<void> _open(
     Future<void> Function() open, {
     required String name,
+    required MediaSource source,
     int? durationMs,
   }) async {
-    setState(() => _opening = true);
+    final attempt = (
+      name: name,
+      source: source,
+      open: () => _open(open, name: name, source: source, durationMs: durationMs),
+    );
+    setState(() {
+      _attempt = attempt;
+      _opening = true;
+      _openError = null;
+      _playerError = null;
+    });
     try {
       await open();
       final ref = _player.itemRef;
       if (ref != null) _known[ref] = (name: name, durationMs: durationMs);
     } on Object catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Open failed: $e')));
-      }
+      // Never the raw text: a stream URL carries the viewer's token.
+      if (mounted) setState(() => _openError = playerErrorReason('$e'));
     } finally {
       if (mounted) setState(() => _opening = false);
     }
     await _apply();
+  }
+
+  /// Why our copy can't play, for the error card. A player error only counts while nothing
+  /// has loaded: decoders also log recoverable errors mid-file.
+  String? get _error {
+    if (_openError case final e?) return e;
+    final logged = _playerError;
+    if (logged == null || _player.itemRef == null) return null;
+    return _player.player.state.duration == Duration.zero
+        ? playerErrorReason(logged)
+        : null;
   }
 
   /// Same path as a local file once the picker hands back a remote copy.
@@ -307,9 +387,78 @@ class _RoomScreenState extends State<RoomScreen> {
   void _seekTo(int ms) =>
       _client.sendIntent('seek', {'position_ms': math.max(0, ms)});
 
+  /// The room's item again from the start, for everyone.
+  void _replay() {
+    final ref = _anchor?.itemRef ?? _player.itemRef;
+    _client.sendIntent('play', {'item_ref': ?ref, 'position_ms': 0});
+  }
+
+  /// The head of the queue becomes the room's item.
+  void _playNext() => _client.sendIntent('skip');
+
   void _toggleMute() {
     setState(() => _muted = !_muted);
-    _player.player.setVolume(_muted ? 0 : 100);
+    _player.player.setVolume(_muted ? 0 : _volume);
+  }
+
+  void _setVolume(double level) {
+    setState(() {
+      _volume = _sessionVolume = level;
+      _muted = false;
+    });
+    _player.player.setVolume(level);
+  }
+
+  void _setAudioTrack(String id) {
+    for (final t in _player.player.state.tracks.audio) {
+      if (t.id == id) _player.player.setAudioTrack(t);
+    }
+  }
+
+  void _setSubtitleTrack(String id) {
+    for (final t in _player.player.state.tracks.subtitle) {
+      if (t.id == id) _player.player.setSubtitleTrack(t);
+    }
+  }
+
+  /// Audio tracks as the player lists them, minus its `auto` and `no` pseudo-tracks.
+  List<TrackOption> get _audioTracks {
+    final state = _player.player.state;
+    return [
+      for (final t in state.tracks.audio)
+        if (t.id != 'auto' && t.id != 'no')
+          (
+            id: t.id,
+            label: _trackLabel(t.id, t.title, t.language),
+            active: t.id == state.track.audio.id,
+          ),
+    ];
+  }
+
+  /// `Off` first, then the file's subtitles; empty when it has none.
+  List<TrackOption> get _subtitleTracks {
+    final state = _player.player.state;
+    final active = state.track.subtitle.id;
+    final real = [
+      for (final t in state.tracks.subtitle)
+        if (t.id != 'auto' && t.id != 'no')
+          (
+            id: t.id,
+            label: _trackLabel(t.id, t.title, t.language),
+            active: t.id == active,
+          ),
+    ];
+    if (real.isEmpty) return const [];
+    return [(id: 'no', label: 'Off', active: active == 'no'), ...real];
+  }
+
+  static String _trackLabel(String id, String? title, String? language) {
+    final parts = [
+      if (title != null && title.trim().isNotEmpty) title.trim(),
+      if (language != null && language.trim().isNotEmpty)
+        language.trim().toUpperCase(),
+    ];
+    return parts.isEmpty ? 'Track $id' : parts.join(' · ');
   }
 
   Future<void> _toggleFullscreen() async {
@@ -424,9 +573,31 @@ class _RoomScreenState extends State<RoomScreen> {
         : "${meta.hostName}'s room";
   }
 
+  /// Who the room waits on to press play. Anchors carry no author, so this is the pause notice's
+  /// guess while paused, and the host while nothing has played.
+  String? get _waitingFor {
+    final anchor = _anchor;
+    if (anchor != null) return anchor.paused ? _pause?.by : null;
+    final meta = _meta;
+    if (meta == null) return null;
+    return meta.hostId == _client.clientId ? 'You' : meta.hostName;
+  }
+
+  /// Adjusting while the drift policy nudges or is about to correct a playing copy.
+  SyncState? get _sync {
+    final anchor = _anchor;
+    if (_stage != StageMode.video || anchor == null) return null;
+    if (anchor.paused) return SyncState.inSync;
+    return _player.nudging || _player.correction != Correction.none
+        ? SyncState.adjusting
+        : SyncState.inSync;
+  }
+
   RoomViewData get _data {
     final state = _player.player.state;
     final anchor = _anchor;
+    final error = _error;
+    final mine = _player.itemRef;
     return RoomViewData(
       room: widget.room,
       title: _title,
@@ -441,11 +612,21 @@ class _RoomScreenState extends State<RoomScreen> {
           _row(q.itemRef, title: q.title, durationMs: q.durationMs),
       ],
       stage: _stage,
-      mismatch: _player.itemRef != null,
+      mismatch: mine != null,
       opening: _opening,
+      buffering: mine != null && state.buffering,
+      error: error,
+      ended: mine != null && state.completed,
+      waitingFor: _waitingFor,
       // Never the remote URL itself: it carries the viewer's token.
-      fileName: _known[_player.itemRef]?.name,
-      positionMs: _player.itemRef == null ? 0 : _roomPositionMs,
+      fileName: error != null || _opening
+          ? _attempt?.name
+          : _known[mine]?.name,
+      source: error != null || _opening
+          ? _attempt?.source
+          : (mine == null ? null : _sourceOf(mine)),
+      roomSource: anchor == null ? null : _sourceOf(anchor.itemRef),
+      positionMs: mine == null ? 0 : _roomPositionMs,
       durationMs: state.duration.inMilliseconds,
       bufferedMs: state.buffer.inMilliseconds,
       playing: anchor != null && !anchor.paused,
@@ -453,6 +634,12 @@ class _RoomScreenState extends State<RoomScreen> {
           ? state.width! / state.height!
           : 16 / 9,
       muted: _muted,
+      volume: _volume,
+      rate: anchor?.rate ?? 1,
+      sync: _sync,
+      driftMs: _player.driftMs,
+      audioTracks: _audioTracks,
+      subtitleTracks: _subtitleTracks,
       fullscreen: _fullscreen,
       pause: _pause,
     );
@@ -476,9 +663,15 @@ class _RoomScreenState extends State<RoomScreen> {
       onSeekBy: _seekBy,
       onSeekTo: _seekTo,
       onToggleMute: _toggleMute,
+      onVolume: _setVolume,
       onFullscreen: _toggleFullscreen,
       onSettings: _showSettings,
       onAddToQueue: _addToQueue,
+      onRetry: _attempt?.open,
+      onReplay: _replay,
+      onPlayNext: _playNext,
+      onAudioTrack: _setAudioTrack,
+      onSubtitleTrack: _setSubtitleTrack,
     ),
   );
 }

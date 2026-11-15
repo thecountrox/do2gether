@@ -90,6 +90,15 @@ class SyncPlayer {
 
   int get positionMs => player.state.position.inMilliseconds;
 
+  /// A rate nudge is running. Read-only, for display: the nudged rate is never the user's speed.
+  bool get nudging => _nudgeTimer != null;
+
+  /// What the drift policy makes of the last measured drift; none when nothing is comparable.
+  Correction get correction {
+    final drift = driftMs;
+    return drift == null ? Correction.none : decideCorrection(drift);
+  }
+
   /// Hashes and opens [file] paused. The caller applies the current anchor afterwards.
   Future<void> open(String file) async {
     final ref = await itemRefForFile(file);
