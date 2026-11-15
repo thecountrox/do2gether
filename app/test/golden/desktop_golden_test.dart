@@ -53,7 +53,11 @@ void main() {
         MaterialApp(
           theme: wtTheme(),
           debugShowCheckedModeBanner: false,
-          home: HomeScreen(api: FakeRoomApi(), pickCopy: () async => null),
+          home: HomeScreen(
+            api: FakeRoomApi(),
+            pickCopy: () async => null,
+            jellyfin: FakeJellyfinApi(),
+          ),
         ),
       );
       await tester.pump(const Duration(milliseconds: 300));

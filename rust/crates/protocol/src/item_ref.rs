@@ -1,6 +1,6 @@
 /// The `item_ref` pattern from `protocol/room.schema.json`, verbatim. [`ItemRef::parse`] is a
 /// hand-written matcher for exactly this pattern; tests assert the schema still says the same.
-pub const ITEM_REF_PATTERN: &str = "^(file:sha256p:[0-9]+:[0-9a-f]{32}:[0-9a-f]{32}|yt:[A-Za-z0-9_-]{11}|ytm:[A-Za-z0-9_-]{11}|subsonic:[a-z0-9-]+/[A-Za-z0-9_-]+)$";
+pub const ITEM_REF_PATTERN: &str = "^(file:sha256p:[0-9]+:[0-9a-f]{32}:[0-9a-f]{32}|yt:[A-Za-z0-9_-]{11}|ytm:[A-Za-z0-9_-]{11}|subsonic:[a-z0-9-]+/[A-Za-z0-9_-]+|jellyfin:[A-Za-z0-9.-]+(:[0-9]{1,5})?/[A-Za-z0-9]{32})$";
 
 /// A parsed, versioned content reference. The algorithm lives inside the ref.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +21,9 @@ pub enum ItemRef<'a> {
         server_id: &'a str,
         track_id: &'a str,
     },
+    /// `jellyfin:<host>[:<port>]/<itemId>` — the host is what every client must agree on; each
+    /// client resolves the stream URL with its own credentials, so the server never carries media.
+    Jellyfin { host: &'a str, item_id: &'a str },
 }
 
 impl<'a> ItemRef<'a> {
@@ -40,6 +43,19 @@ impl<'a> ItemRef<'a> {
         }
         if let Some(video_id) = s.strip_prefix("ytm:") {
             return is_video_id(video_id).then_some(ItemRef::Ytm { video_id });
+        }
+        if let Some(rest) = s.strip_prefix("jellyfin:") {
+            let (host, item_id) = rest.split_once('/')?;
+            let okay_host = match host.split_once(':') {
+                Some((name, port)) => {
+                    is_run(name, |b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+                        && port.len() <= 5
+                        && is_run(port, |b| b.is_ascii_digit())
+                }
+                None => is_run(host, |b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-'),
+            };
+            let okay_id = item_id.len() == 32 && item_id.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase());
+            return (okay_host && okay_id).then_some(ItemRef::Jellyfin { host, item_id });
         }
         if let Some(rest) = s.strip_prefix("subsonic:") {
             let (server_id, track_id) = rest.split_once('/')?;
@@ -116,6 +132,22 @@ mod tests {
                 track_id: "Tr_0001-x"
             })
         );
+        let item = "0123456789abcdef0123456789abcdef";
+        let jelly = format!("jellyfin:jelly.example.com:8096/{item}");
+        assert_eq!(
+            ItemRef::parse(&jelly),
+            Some(ItemRef::Jellyfin {
+                host: "jelly.example.com:8096",
+                item_id: item
+            })
+        );
+        assert_eq!(
+            ItemRef::parse(&format!("jellyfin:192.168.1.9/{item}")),
+            Some(ItemRef::Jellyfin {
+                host: "192.168.1.9",
+                item_id: item
+            })
+        );
     }
 
     #[test]
@@ -146,6 +178,12 @@ mod tests {
             "subsonic:navidrome/tr/1".into(),
             "subsonic:navidrome/tr-1é".into(),
             "http://example.com/a.mp4".into(),
+            format!("jellyfin:jelly.example.com:8096/{}", A32.to_uppercase()),
+            format!("jellyfin:jelly.example.com:8096/{}", &A32[1..]),
+            format!("jellyfin:jelly.example.com:999999999/{B32}"),
+            format!("jellyfin:/{B32}"),
+            format!("jellyfin:jelly.example.com/{B32}/extra"),
+            format!("jellyfin:jel ly.example.com/{B32}"),
         ];
         for s in bad {
             assert!(!is_item_ref(&s), "{s:?} should be rejected");

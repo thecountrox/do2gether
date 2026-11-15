@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:watch_together/jellyfin.dart';
 import 'package:watch_together/local_copy.dart';
 import 'package:watch_together/room_api.dart';
 
@@ -46,6 +47,53 @@ class FakeRoomApi implements RoomApi {
     token: token(roomCode, exp: inTenMinutes()),
     hostId: 'host-1',
   );
+}
+
+const String jellyItemId = '8b2ab2fa2506721d49db38751b5142c9';
+
+const List<JellyfinItem> jellyMovies = [
+  JellyfinItem(id: 'aaaabbbbccccddddeeeeffff00001111', name: 'Big Buck Bunny'),
+  JellyfinItem(
+    id: jellyItemId,
+    name: 'sample-room',
+    runtime: Duration(seconds: 20),
+  ),
+];
+
+/// Answers from memory; never touches the network.
+class FakeJellyfinSession extends JellyfinSession {
+  FakeJellyfinSession({required super.server, required super.user, this.fail})
+    : super(token: 'fake-token');
+
+  final Object? fail;
+
+  @override
+  Future<List<JellyfinItem>> movies() async {
+    if (fail case final e?) throw e;
+    return jellyMovies;
+  }
+}
+
+class FakeJellyfinApi implements JellyfinApi {
+  FakeJellyfinApi({this.saved, this.error});
+
+  JellyfinSession? saved;
+  Object? error;
+  final List<({Uri server, String user, String pass})> connects = [];
+
+  @override
+  Future<JellyfinSession?> restore() async => saved;
+
+  @override
+  Future<JellyfinSession> connect({
+    required Uri server,
+    required String user,
+    required String pass,
+  }) async {
+    connects.add((server: server, user: user, pass: pass));
+    if (error case final e?) throw e;
+    return FakeJellyfinSession(server: server, user: user);
+  }
 }
 
 /// Desktop window at 1:1 pixels; restored after the test.

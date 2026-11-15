@@ -15,17 +15,34 @@ class LocalCopy {
     required this.bytes,
     required this.itemRef,
     this.duration,
-  });
+  }) : title = null,
+       isRemote = false;
+
+  /// A copy streamed from the viewer's Jellyfin: [url] is played as-is and never hashed.
+  const LocalCopy.remote({
+    required String url,
+    required this.itemRef,
+    required String this.title,
+    this.duration,
+  }) : path = url,
+       bytes = 0,
+       isRemote = true;
+
+  /// The file on disk, or the stream URL of a remote copy.
   final String path;
   final int bytes;
   final String itemRef;
   final Duration? duration;
+  final bool isRemote;
 
-  String get name => baseName(path);
+  /// Display name of a remote copy; a local one shows its file name.
+  final String? title;
 
-  /// `1.4 GB · 24:10`, without the duration when it is unknown.
+  String get name => title ?? baseName(path);
+
+  /// `1.4 GB · 24:10` or `Jellyfin · 0:20`, without the duration when it is unknown.
   String get details => [
-    fmtBytes(bytes),
+    isRemote ? 'Jellyfin' : fmtBytes(bytes),
     if (duration case final d? when d > Duration.zero) fmtTime(d.inMilliseconds),
   ].join(' · ');
 }

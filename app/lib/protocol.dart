@@ -11,7 +11,7 @@ const int protocolVersion = 1;
 
 /// The `item_ref` pattern from protocol/room.schema.json, verbatim.
 final RegExp itemRefPattern = RegExp(
-  r'^(file:sha256p:[0-9]+:[0-9a-f]{32}:[0-9a-f]{32}|yt:[A-Za-z0-9_-]{11}|ytm:[A-Za-z0-9_-]{11}|subsonic:[a-z0-9-]+/[A-Za-z0-9_-]+)$',
+  r'^(file:sha256p:[0-9]+:[0-9a-f]{32}:[0-9a-f]{32}|yt:[A-Za-z0-9_-]{11}|ytm:[A-Za-z0-9_-]{11}|subsonic:[a-z0-9-]+/[A-Za-z0-9_-]+|jellyfin:[A-Za-z0-9.-]+(:[0-9]{1,5})?/[A-Za-z0-9]{32})$',
 );
 
 bool isItemRef(String s) => itemRefPattern.hasMatch(s);

@@ -32,7 +32,11 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: wtTheme(),
-        home: HomeScreen(api: api ?? FakeRoomApi(), pickCopy: () async => pick),
+        home: HomeScreen(
+          api: api ?? FakeRoomApi(),
+          pickCopy: () async => pick,
+          jellyfin: FakeJellyfinApi(),
+        ),
       ),
     );
     await tester.pump();

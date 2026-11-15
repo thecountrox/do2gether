@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'format.dart';
+import 'jellyfin.dart';
+import 'jellyfin_picker.dart';
 import 'links.dart';
 import 'local_copy.dart';
 import 'room_api.dart';
@@ -45,11 +47,13 @@ class HomeScreen extends StatefulWidget {
     super.key,
     this.api = const HttpRoomApi(),
     this.pickCopy = pickLocalCopy,
+    this.jellyfin = const HttpJellyfinApi(),
     this.initialInvite,
     this.forwardedInvites,
   });
   final RoomApi api;
   final PickCopy pickCopy;
+  final JellyfinApi jellyfin;
 
   /// Invite URL the app was launched with, if any.
   final String? initialInvite;
@@ -78,12 +82,16 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _creating = false;
   String? _createError;
 
+  /// Restored from the saved config at startup, or from a sign-in in the Jellyfin dialog.
+  JellyfinSession? _jellyfin;
+
   Uri get _serverUri => Uri.parse(_server);
 
   @override
   void initState() {
     super.initState();
     unawaited(_ping());
+    unawaited(_restoreJellyfin());
     final invite = widget.initialInvite;
     if (invite != null && invite.isNotEmpty) {
       _invite.text = invite;
@@ -184,6 +192,25 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _restoreJellyfin() async {
+    try {
+      final session = await widget.jellyfin.restore();
+      if (mounted) _jellyfin ??= session;
+    } on Object {
+      // No saved sign-in to offer; the dialog starts at the form.
+    }
+  }
+
+  Future<void> _pickJellyfin() async {
+    final copy = await showJellyfinPicker(
+      context,
+      api: widget.jellyfin,
+      session: _jellyfin,
+      onSession: (session) => _jellyfin = session,
+    );
+    if (copy != null && mounted) setState(() => _copy = copy);
+  }
+
   bool get _linkUsable =>
       _link != null &&
       (_state == InviteState.found ||
@@ -209,7 +236,7 @@ class _HomeScreenState extends State<HomeScreen> {
           token: link.token,
           name: _name,
           clientId: hostId,
-          initialFile: copy?.path,
+          initialCopy: copy,
         ),
       ),
     );
@@ -593,7 +620,11 @@ class _HomeScreenState extends State<HomeScreen> {
             _MineRow(
               copy: _copy!,
               hostRef: _info?.itemRef,
-              onChange: _picking ? null : _pick,
+              onChange: _picking
+                  ? null
+                  : _copy!.isRemote
+                  ? _pickJellyfin
+                  : _pick,
             ),
           ],
         ];
@@ -677,6 +708,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 label: _picking ? 'Checking…' : 'Choose file…',
                 compact: true,
                 onPressed: _picking ? null : _pick,
+              ),
+              WtTextButton(
+                label: 'Jellyfin',
+                compact: true,
+                onPressed: _picking ? null : _pickJellyfin,
               ),
             ],
           ),

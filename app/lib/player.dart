@@ -73,9 +73,10 @@ class SyncPlayer {
   final Player player;
   late final VideoController video;
 
+  /// The open local file; null for a remote source.
   String? path;
 
-  /// The ref of the open local file.
+  /// The ref of what is open: hashed from the local file, or given with the remote source.
   String? itemRef;
 
   /// Player position minus room position at the last check; null when not comparable.
@@ -95,6 +96,18 @@ class SyncPlayer {
     await player.open(Media(file), play: false);
     path = file;
     itemRef = ref;
+    status = 'opened';
+  }
+
+  /// Opens a stream that is not on disk (a Jellyfin URL) paused, under the ref it was picked as:
+  /// there is no file to hash. The caller applies the current anchor afterwards.
+  Future<void> openSource({
+    required String uri,
+    required String itemRef,
+  }) async {
+    await player.open(Media(uri), play: false);
+    path = null;
+    this.itemRef = itemRef;
     status = 'opened';
   }
 

@@ -33,7 +33,7 @@
   "$defs": {
     "item_ref": {
       "type": "string",
-      "pattern": "^(file:sha256p:[0-9]+:[0-9a-f]{32}:[0-9a-f]{32}|yt:[A-Za-z0-9_-]{11}|ytm:[A-Za-z0-9_-]{11}|subsonic:[a-z0-9-]+/[A-Za-z0-9_-]+)$",
+      "pattern": "^(file:sha256p:[0-9]+:[0-9a-f]{32}:[0-9a-f]{32}|yt:[A-Za-z0-9_-]{11}|ytm:[A-Za-z0-9_-]{11}|subsonic:[a-z0-9-]+/[A-Za-z0-9_-]+|jellyfin:[A-Za-z0-9.-]+(:[0-9]{1,5})?/[A-Za-z0-9]{32})$",
       "description": "Versioned content reference. The algorithm lives inside the ref."
     },
     "playback": {

@@ -29,7 +29,7 @@ class RoomScreen extends StatefulWidget {
     required this.token,
     required this.name,
     this.clientId,
-    this.initialFile,
+    this.initialCopy,
     this.pickCopy = pickLocalCopy,
   });
 
@@ -40,7 +40,7 @@ class RoomScreen extends StatefulWidget {
   final String? clientId;
 
   /// The copy chosen on Home or in the room-ready dialog; opened on entry.
-  final String? initialFile;
+  final LocalCopy? initialCopy;
   final PickCopy pickCopy;
 
   @override
@@ -83,8 +83,10 @@ class _RoomScreenState extends State<RoomScreen> {
     _client = _connect(widget.clientId);
     _pollTimer = Timer.periodic(pollEvery, (_) => _poll());
     _reportTimer = Timer.periodic(reportEvery, (_) => _report());
-    final initial = widget.initialFile;
-    if (initial != null) _openPath(initial);
+    final initial = widget.initialCopy;
+    if (initial != null) {
+      initial.isRemote ? _openRemote(initial) : _openPath(initial.path);
+    }
   }
 
   @override
@@ -228,12 +230,26 @@ class _RoomScreenState extends State<RoomScreen> {
     await _openPath(file.path);
   }
 
-  Future<void> _openPath(String path) async {
+  Future<void> _openPath(String path) =>
+      _open(() => _player.open(path), name: baseName(path));
+
+  /// A remote copy streams as-is under the ref it was picked with; nothing is hashed.
+  Future<void> _openRemote(LocalCopy copy) => _open(
+    () => _player.openSource(uri: copy.path, itemRef: copy.itemRef),
+    name: copy.name,
+    durationMs: copy.duration?.inMilliseconds,
+  );
+
+  Future<void> _open(
+    Future<void> Function() open, {
+    required String name,
+    int? durationMs,
+  }) async {
     setState(() => _opening = true);
     try {
-      await _player.open(path);
+      await open();
       final ref = _player.itemRef;
-      if (ref != null) _known[ref] = (name: baseName(path), durationMs: null);
+      if (ref != null) _known[ref] = (name: name, durationMs: durationMs);
     } on Object catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -398,7 +414,6 @@ class _RoomScreenState extends State<RoomScreen> {
   RoomViewData get _data {
     final state = _player.player.state;
     final anchor = _anchor;
-    final path = _player.path;
     return RoomViewData(
       room: widget.room,
       title: _title,
@@ -415,7 +430,8 @@ class _RoomScreenState extends State<RoomScreen> {
       stage: _stage,
       mismatch: _player.itemRef != null,
       opening: _opening,
-      fileName: path == null ? null : baseName(path),
+      // Never the remote URL itself: it carries the viewer's token.
+      fileName: _known[_player.itemRef]?.name,
       positionMs: _player.itemRef == null ? 0 : _roomPositionMs,
       durationMs: state.duration.inMilliseconds,
       bufferedMs: state.buffer.inMilliseconds,

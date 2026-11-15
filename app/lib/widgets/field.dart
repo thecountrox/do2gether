@@ -13,6 +13,7 @@ class WtField extends StatefulWidget {
     this.trailing,
     this.readOnly = false,
     this.autofocus = false,
+    this.obscure = false,
     this.height = 60,
     this.onChanged,
     this.onSubmitted,
@@ -24,6 +25,9 @@ class WtField extends StatefulWidget {
   final Widget? trailing;
   final bool readOnly;
   final bool autofocus;
+
+  /// Password entry: dots instead of text.
+  final bool obscure;
   final double height;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
@@ -66,6 +70,7 @@ class _WtFieldState extends State<WtField> {
               controller: widget.controller,
               readOnly: widget.readOnly,
               autofocus: widget.autofocus,
+              obscureText: widget.obscure,
               onChanged: widget.onChanged,
               onSubmitted: widget.onSubmitted,
               maxLines: 1,

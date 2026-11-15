@@ -560,6 +560,8 @@ class _CopyRow extends StatelessWidget {
                 Text(
                   copy == null
                       ? 'Plays from your disk'
+                      : copy.isRemote
+                      ? copy.details
                       : '${copy.details} · Plays from your disk',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
