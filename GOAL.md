@@ -39,9 +39,22 @@ files host after each run.
 - YouTube/YTM sources; the extension is a later track.
 - Voice: Discord's, always.
 
+## v1.1 Jellyfin — state (2026-11-15)
+
+| Piece | State |
+|---|---|
+| `jellyfin:<host>[:port]/<itemId>` in schema, Rust protocol, Dart mirror | done, tested |
+| Client resolution `{server}/Videos/{id}/stream?static=true&api_key=` | done; mpv plays it (exit 0) |
+| Live Jellyfin 12.4.0 on this VPS, public at `jelly.141.253.97.15.sslip.io` | running, docs/10 |
+| Picker UI (server/user/password -> movie list -> copy) | done, 126 Flutter tests |
+| Host anchor without the UI (`scripts/host-anchor.py`) | done; room shows "playing at 0:19" |
+| In-app decode of the stream on a real desktop | **not yet witnessed** (GUI automation blocked: no xdotool/ydotoold) |
+| Now-playing label for remote refs still says "Host's file" | open, cosmetic |
+
 ## Next milestones
 
-1. **v1.1 Jellyfin**: `jellyfin:<server>/<item>` refs, client-side direct play, no server egress.
+1. **Jellyfin polish**: show `Jellyfin · <name>` in the now-playing row, browse beyond Movies, and
+   confirm in-app decode with one manual click on gigapc.
 2. **Join polish**: `do2gether://` deep-link handling so an invite opens the app prefilled.
 3. **Rename pass**: ids/labels from `watch-together` to `do2gether` in one shot (bundle id, services,
    desktop entry) — after v1.1, so installs break once.
