@@ -32,7 +32,8 @@ so invite links work without an installer or elevation.
   250 ms–2 s, hard seek >2 s.
 - Flutter desktop client: Home launcher, Room ready dialog, player + member rail + dock, candy palette,
   responsive down to a tiled 856 px window.
-- Invite deep links on both desktop platforms; the app self-registers the URL scheme.
+- Invite deep links on both desktop platforms; the app self-registers the URL scheme, and a second
+  launch hands its invite to the window that is already open instead of opening another.
 - `wt-play` CLI (mpv over JSON IPC) for headless sync, plus `scripts/drift-check.py`.
 
 **Measured:** two clients, deployed server, `p95 0 ms / max 1 ms` (simulated players on one host, so it
@@ -76,8 +77,8 @@ python3 scripts/drift-check.py     # host creates; guest token minted through th
 ## Known gaps
 
 - Guests must have their own copy of the file (or a URL ref); no Jellyfin adapter yet.
-- Clicking an invite while the app is already running opens a second window instead of focusing the
-  first — single-instance handling is not done.
+- A forwarded invite updates the open window but does not raise it to the front (no platform
+  window-raise yet).
 - Drift settles 100–180 ms after a seek: fine for video, not for music (needs the host-stream model).
 - Windows build is CI-produced and unsigned; SmartScreen will warn.
 - Music (Navidrome/Jellyfin) and YouTube sources are designed, not built.
