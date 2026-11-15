@@ -2,6 +2,9 @@ import 'dart:convert';
 
 typedef InviteLink = ({String room, String token});
 
+/// Schemes the desktop app registers with the OS for invite links.
+const Set<String> inviteSchemes = {'do2gether', 'watchtogether'};
+
 /// Extracts a room and token from an invite or a manual room/token pair.
 InviteLink? parseInviteLink(String input) {
   final value = input.trim();
@@ -9,11 +12,11 @@ InviteLink? parseInviteLink(String input) {
   if (uri != null &&
       uri.hasScheme &&
       value.contains('://') &&
-      uri.scheme != 'watchtogether' &&
+      !inviteSchemes.contains(uri.scheme) &&
       uri.scheme != 'https') {
     return null;
   }
-  if (uri != null && uri.scheme == 'watchtogether' && uri.host == 'join') {
+  if (uri != null && inviteSchemes.contains(uri.scheme) && uri.host == 'join') {
     final room = uri.queryParameters['room'];
     final token = uri.queryParameters['token'];
     if (room != null &&

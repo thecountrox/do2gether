@@ -70,7 +70,7 @@ pub(crate) async fn page(Path(token): Path<String>, headers: HeaderMap) -> Respo
     };
     let base = escape(&format!("{scheme}://{host}"));
     let deep_link = escape(&format!(
-        "watchtogether://join?room={}&token={}",
+        "do2gether://join?room={}&token={}",
         component(&claims.room),
         component(&token)
     ));

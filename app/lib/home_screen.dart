@@ -45,9 +45,13 @@ class HomeScreen extends StatefulWidget {
     super.key,
     this.api = const HttpRoomApi(),
     this.pickCopy = pickLocalCopy,
+    this.initialInvite,
   });
   final RoomApi api;
   final PickCopy pickCopy;
+
+  /// Invite URL the app was launched with, if any.
+  final String? initialInvite;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -76,6 +80,11 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     unawaited(_ping());
+    final invite = widget.initialInvite;
+    if (invite != null && invite.isNotEmpty) {
+      _invite.text = invite;
+      _onInvite(invite);
+    }
   }
 
   @override

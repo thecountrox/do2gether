@@ -2,16 +2,19 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watch_together/links.dart';
+import 'package:watch_together/main.dart';
 
 void main() {
   final token =
       '${base64Url.encode(utf8.encode(jsonEncode({'room': 'abc123', 'exp': 123456789}))).replaceAll('=', '')}.signature';
 
-  test('custom scheme invite', () {
-    expect(parseInviteLink('watchtogether://join?room=abc123&token=$token'), (
-      room: 'abc123',
-      token: token,
-    ));
+  test('custom scheme invites, both names', () {
+    for (final scheme in ['do2gether', 'watchtogether']) {
+      expect(parseInviteLink('$scheme://join?room=abc123&token=$token'), (
+        room: 'abc123',
+        token: token,
+      ), reason: scheme);
+    }
   });
   test('HTTPS invite decodes room from token', () {
     expect(parseInviteLink('https://example.com/join/$token'), (
@@ -28,10 +31,30 @@ void main() {
       '',
       'garbage',
       'https://example.com/join/garbage',
+      'do2gether://join?room=abc123',
       'watchtogether://join?room=abc123',
       'ftp://example.com/join/$token',
     ]) {
       expect(parseInviteLink(value), isNull, reason: value);
     }
+  });
+
+  group('inviteFromArgs', () {
+    test('picks the invite out of an argv list', () {
+      expect(
+        inviteFromArgs(['--ozone-platform=wayland', 'do2gether://join?room=abc123&token=$token']),
+        'do2gether://join?room=abc123&token=$token',
+      );
+    });
+    test('ignores flags and junk', () {
+      expect(inviteFromArgs(['--flag', 'nonsense']), isNull);
+      expect(inviteFromArgs(const []), isNull);
+    });
+    test('accepts a bare https join link', () {
+      expect(
+        inviteFromArgs(['https://watch.example.com/join/$token']),
+        'https://watch.example.com/join/$token',
+      );
+    });
   });
 }
