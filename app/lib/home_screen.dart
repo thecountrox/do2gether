@@ -9,6 +9,8 @@ import 'jellyfin.dart';
 import 'jellyfin_picker.dart';
 import 'links.dart';
 import 'local_copy.dart';
+import 'media.dart';
+import 'media_library.dart';
 import 'room_api.dart';
 import 'room_ready.dart';
 import 'room_screen.dart';
@@ -78,12 +80,20 @@ class _HomeScreenState extends State<HomeScreen> {
   RoomInfo? _info;
   int _lookupSeq = 0;
   LocalCopy? _copy;
-  bool _picking = false;
   bool _creating = false;
   String? _createError;
 
-  /// Restored from the saved config at startup, or from a sign-in in the Jellyfin dialog.
-  JellyfinSession? _jellyfin;
+  late final _local = LocalMediaSource(pickFile: widget.pickCopy);
+
+  /// Restored from the saved config at startup; the library's `Connect Jellyfin` signs in.
+  late final _jellyfin = JellyfinMediaSource(
+    api: widget.jellyfin,
+    signIn: (previous) =>
+        showJellyfinSignIn(context, api: widget.jellyfin, previous: previous),
+  );
+
+  /// Shared with the room, so a sign-in or a file opened here is still there after joining.
+  late final _sources = mediaSources(local: _local, jellyfin: _jellyfin);
 
   Uri get _serverUri => Uri.parse(_server);
 
@@ -91,7 +101,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     unawaited(_ping());
-    unawaited(_restoreJellyfin());
+    unawaited(_jellyfin.restore());
     final invite = widget.initialInvite;
     if (invite != null && invite.isNotEmpty) {
       _invite.text = invite;
@@ -176,43 +186,16 @@ class _HomeScreenState extends State<HomeScreen> {
     _onInvite(text);
   }
 
-  Future<void> _pick() async {
-    setState(() => _picking = true);
-    try {
-      final copy = await widget.pickCopy();
-      if (copy != null && mounted) setState(() => _copy = copy);
-    } on Object catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Couldn't open that file: $e")));
-      }
-    } finally {
-      if (mounted) setState(() => _picking = false);
-    }
-  }
-
-  Future<void> _restoreJellyfin() async {
-    try {
-      final session = await widget.jellyfin.restore();
-      if (mounted) _jellyfin ??= session;
-    } on Object {
-      // No saved sign-in to offer; the dialog starts at the form.
-    }
-  }
-
-  Future<void> _pickJellyfin() async {
-    final copy = await _pickJellyfinCopy();
+  /// The library; what is played there becomes the copy to join with. [initial] opens on that
+  /// source's tab.
+  Future<void> _pickMedia({MediaSourceKind? initial}) async {
+    final copy = await showMediaLibrary(
+      context,
+      sources: _sources,
+      initial: initial,
+    );
     if (copy != null && mounted) setState(() => _copy = copy);
   }
-
-  /// Opens the picker without touching Home's own copy — the room screen calls this directly.
-  Future<LocalCopy?> _pickJellyfinCopy() => showJellyfinPicker(
-    context,
-    api: widget.jellyfin,
-    session: _jellyfin,
-    onSession: (session) => _jellyfin = session,
-  );
 
   bool get _linkUsable =>
       _link != null &&
@@ -240,7 +223,7 @@ class _HomeScreenState extends State<HomeScreen> {
           name: _name,
           clientId: hostId,
           initialCopy: copy,
-          pickJellyfin: _pickJellyfinCopy,
+          sources: _sources,
         ),
       ),
     );
@@ -263,7 +246,10 @@ class _HomeScreenState extends State<HomeScreen> {
         copy: _copy,
         api: widget.api,
         pickCopy: widget.pickCopy,
-        onCopy: (copy) => setState(() => _copy = copy),
+        onCopy: (copy) {
+          _local.remember(copy);
+          setState(() => _copy = copy);
+        },
       );
       if (enter == true && mounted) {
         _enter(
@@ -364,6 +350,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             _Brand(
                               next: _nextStep,
                               status: _statusRow(),
+                              onLibrary: _pickMedia,
                               compact: true,
                             ),
                             const SizedBox(height: 32),
@@ -379,6 +366,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               child: _Brand(
                                 next: _nextStep,
                                 status: _statusRow(),
+                                onLibrary: _pickMedia,
                               ),
                             ),
                             SizedBox(width: gap),
@@ -624,11 +612,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _MineRow(
               copy: _copy!,
               hostRef: _info?.itemRef,
-              onChange: _picking
-                  ? null
-                  : _copy!.isRemote
-                  ? _pickJellyfin
-                  : _pick,
+              onChange: () => _pickMedia(initial: sourceKindOf(_copy!.itemRef)),
             ),
           ],
         ];
@@ -648,7 +632,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
     // Shown even with no invite yet: picking what you'll play is the second half of joining, and
-    // hiding it until a link is pasted made the Jellyfin picker unfindable.
+    // hiding it until a link is pasted made the library unfindable.
     final needsCopy = _copy == null;
     final reason = !_linkUsable
         ? 'Paste an invite to join'
@@ -713,14 +697,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               WtTextButton(
-                label: _picking ? 'Checking…' : 'Choose file…',
+                label: 'Pick media',
+                icon: Icons.video_library_outlined,
                 compact: true,
-                onPressed: _picking ? null : _pick,
-              ),
-              WtTextButton(
-                label: 'Jellyfin',
-                compact: true,
-                onPressed: _picking ? null : _pickJellyfin,
+                onPressed: _pickMedia,
               ),
               const SizedBox(width: 4),
             ],
@@ -735,12 +715,16 @@ class _Brand extends StatelessWidget {
   const _Brand({
     required this.next,
     required this.status,
+    required this.onLibrary,
     this.compact = false,
   });
 
   /// Index of the step to do next; 0 paste, 1 open copy, 2 play.
   final int next;
   final Widget status;
+
+  /// Opens the library: beside the wordmark when compact, under the headline otherwise.
+  final VoidCallback onLibrary;
 
   /// Narrow window: sized to content, steps folded behind `How it works`.
   final bool compact;
@@ -756,6 +740,11 @@ class _Brand extends StatelessWidget {
     const mark = Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [WtWordmark(), SizedBox(width: 6), WtSpark()],
+    );
+    final library = _GhostChip(
+      label: 'Library',
+      icon: Icons.video_library_outlined,
+      onTap: onLibrary,
     );
     final headline = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -804,7 +793,7 @@ class _Brand extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          mark,
+          Row(children: [mark, const Spacer(), library]),
           const SizedBox(height: 24),
           headline,
           const SizedBox(height: 16),
@@ -817,7 +806,16 @@ class _Brand extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [mark, headline, steps, status],
+      // The column is too narrow for the chip beside the wordmark.
+      children: [
+        mark,
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [headline, const SizedBox(height: 20), library],
+        ),
+        steps,
+        status,
+      ],
     );
   }
 }

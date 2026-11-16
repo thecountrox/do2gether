@@ -1,0 +1,13 @@
+{
+ "phase": "done",
+ "batch": 3,
+ "turn": 280,
+ "last_tool": "TodoWrite",
+ "last_text": "widget_test.dart`, `jellyfin_picker_test.dart` and `room_view_test.dart` for the new flows.\n\n## Deferred\n- YouTube and Music have tabs marked Soon, but no adapters behind them.\n- Local doesn't scan folders; it only lists files picked this session.\n- Jellyfin lists Movies only, up to 100 items, with no paging, series or music.\n- Search only filters items already loaded; it doesn't query the server.",
+ "cost_usd": 13.5846,
+ "session_id": "3d153449-3695-463c-a746-f3293f01907b",
+ "result": "TASK21 is done. All 170 tests pass, the analyzer has nothing new, and `flutter build linux --debug` builds. The one analyzer note left is the `containsSemantics` deprecation in `test/room_view_test.dart:430`, which was there before this task. Nothing is committed yet.\n\n## The model as built (`app/lib/media.dart`)\n- **`MediaKind`** `{video, audio, live}` and **`MediaSourceKind`** `{local, jellyfin, youtube, ytm}`. `sourceKindOf(ref)` works out the source from a ref's prefix, so refs on the wire are unchanged (`file:sha256p:\u2026`, `jellyfin:<host>/<id>`).\n- **`MediaItem`** (`media.dart:21`): the ref, title, subtitle, kind, source, duration, poster URL and aspect ratio. `mediaMatches(item, query)` does the search.\n- **`MediaSource`** (`media.dart:72`) is the abstract base. It has `kind`, `label`, `ready`, `available`, `account`, `emptyHint` and `actions` (`MediaSourceAction`), plus three methods:\n  - `browse({query})` lists the items.\n  - `ensureReady()` handles sign-in.\n  - `open(item)` returns a `Future<LocalCopy?>`.\n- **The four adapters:**\n  - `LocalMediaSource` lists files opened this session, with a `Choose file\u2026` action.\n  - `JellyfinMediaSource` restores the saved session and shows posters. If the server says the token is invalid (HTTP 401), it drops the session. Its `ensureReady` is the old Jellyfin dialog, now just the sign-in form (`showJellyfinSignIn`).\n  - `SoonMediaSource` covers YouTube and Music, both marked unavailable.\n\n## How sources register\n`mediaSources(local:, jellyfin:)` (`media.dart:104`) returns one entry per adapter, in tab order. The library builds its tabs from that list, so adding a source means writing a `MediaSource` subclass and adding one line there. Home builds the list once and passes it to `RoomScreen`.\n\n## Entry points\n- **Home:** a `Pick media` button replaces the old inline links, and drag-and-drop still works. The `Library` chip sits in the brand column.\n- **Room:** the queue's Add button opens `showMediaLibrary(mode: LibraryMode.q",
+ "name": "q21",
+ "updated": 1794814909,
+ "subtype": "success"
+}

@@ -1,0 +1,13 @@
+{
+ "phase": "done",
+ "batch": 1,
+ "turn": 64,
+ "last_tool": "Bash",
+ "last_text": "ePicked` with a fake send function instead of a real client.\n\n**Skipped, as the task allowed:**\n- **Empty-state hint:** \"Add the next episode so nobody has to ask.\" doesn't assume a file, so I left it alone.\n- **Fullscreen exit:** TASK19 already added always-visible `Show controls` and `Exit fullscreen` pills (`_cornerPills` in `room_view.dart`). They sit outside the auto-hide, so they never fade.",
+ "cost_usd": 1.7112,
+ "session_id": "05428b0b-483e-4333-aa88-022031a6ce03",
+ "result": "The queue's `Add` button now opens a two-entry menu, and Jellyfin items can be queued. `flutter test` passes (148 passed, 1 skipped: the live-server test). `flutter analyze` reports one info, and it isn't from this change: a deprecated `containsSemantics` call that was already in `room_view_test.dart`. `flutter build linux --debug` builds. Nothing is committed.\n\n**Files**\n- `lib/room_controls.dart`: the track picker's menu style and row are now shared as `wtMenuStyle` and `WtMenuItem`. The track picker uses them, so it looks the same as before.\n- `lib/room_view.dart`:\n  - `QueueRow` now carries a `source`, and every queue row shows the same `Jellyfin` / `Local file` chip as the now-playing row.\n  - `RoomView` has a new `onQueueJellyfin` callback. `onAddToQueue` is now the \"from this computer\" route.\n  - The rail's `Add` button opens the new menu.\n- `lib/room_screen.dart`:\n  - Both menu entries go through one new function, `queuePicked`. It runs the picker, records the name and duration in `_known` under the item's `item_ref`, then sends `queue_add` with that ref unchanged.\n  - The chip's source is worked out from the ref (`jellyfin:` prefix) each time the row is drawn. Nothing is stored.\n- Tests: updated the row fixtures in `room_view_test.dart` and the golden test. I regenerated `test/golden/room_1440.png` because the queue rows now have chips, and checked the image by eye.\n\n**How the menu is built:** `Add` is the same small ghost button, now inside a `MenuAnchor` that uses the track picker's style. Pressing it opens or closes the menu, and it's disabled while disconnected, as before. The entries are `From this computer` (folder icon) and `From Jellyfin` (the server icon already used on the stage). `From Jellyfin` only appears when the room screen has a Jellyfin picker. No second button was added to the rail header.\n\n**Tests:** I added 6, in a `queue Add` group:\n- Both entries appear when a Jellyfin picker exists, and each calls its own route.\n- Only `From this com",
+ "name": "q20",
+ "updated": 1794811879,
+ "subtype": "success"
+}

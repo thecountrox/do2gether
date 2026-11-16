@@ -96,6 +96,61 @@ class FakeJellyfinApi implements JellyfinApi {
   }
 }
 
+/// A fuller shelf than [jellyMovies], for library layouts and goldens.
+const List<JellyfinItem> shelfMovies = [
+  JellyfinItem(
+    id: 'aaaabbbbccccddddeeeeffff00001111',
+    name: 'Big Buck Bunny',
+    runtime: Duration(minutes: 9, seconds: 56),
+  ),
+  JellyfinItem(
+    id: 'aaaabbbbccccddddeeeeffff00002222',
+    name: 'Cosmos Laundromat',
+    runtime: Duration(minutes: 12, seconds: 10),
+  ),
+  JellyfinItem(
+    id: 'aaaabbbbccccddddeeeeffff00003333',
+    name: 'Elephants Dream',
+    runtime: Duration(minutes: 10, seconds: 54),
+  ),
+  JellyfinItem(
+    id: jellyItemId,
+    name: 'sample-room',
+    runtime: Duration(seconds: 20),
+  ),
+  JellyfinItem(
+    id: 'aaaabbbbccccddddeeeeffff00004444',
+    name: 'Sintel',
+    runtime: Duration(minutes: 14, seconds: 48),
+  ),
+  JellyfinItem(
+    id: 'aaaabbbbccccddddeeeeffff00005555',
+    name: 'Spring',
+    runtime: Duration(minutes: 7, seconds: 44),
+  ),
+  JellyfinItem(
+    id: 'aaaabbbbccccddddeeeeffff00006666',
+    name: 'Tears of Steel',
+    runtime: Duration(minutes: 12, seconds: 14),
+  ),
+  JellyfinItem(
+    id: 'aaaabbbbccccddddeeeeffff00007777',
+    name: 'The Daily Dweebs',
+    runtime: Duration(minutes: 2, seconds: 50),
+  ),
+];
+
+/// Signed in as root, answering with [shelf] from memory.
+class ShelfSession extends JellyfinSession {
+  const ShelfSession({required super.server, this.shelf = shelfMovies})
+    : super(token: 'fake-token', user: 'root');
+
+  final List<JellyfinItem> shelf;
+
+  @override
+  Future<List<JellyfinItem>> movies() async => shelf;
+}
+
 /// Desktop window at 1:1 pixels; restored after the test.
 void useWindow(WidgetTester tester, Size size) {
   tester.view.devicePixelRatio = 1;
@@ -117,7 +172,8 @@ class FakeClipboard {
         .setMockMethodCallHandler(SystemChannels.platform, (call) async {
           switch (call.method) {
             case 'Clipboard.setData':
-              text = (call.arguments as Map<Object?, Object?>)['text'] as String?;
+              text =
+                  (call.arguments as Map<Object?, Object?>)['text'] as String?;
               return null;
             case 'Clipboard.getData':
               return {'text': text};

@@ -38,6 +38,15 @@ String streamUrl({
     '${server.replaceFirst(RegExp(r'/+$'), '')}/Videos/$itemId/stream'
     '?static=true&api_key=${Uri.encodeQueryComponent(token)}';
 
+/// The item's poster: `{server}/Items/{itemId}/Images/Primary?maxHeight=300&api_key={token}`.
+String posterUrl({
+  required String server,
+  required String token,
+  required String itemId,
+}) =>
+    '${server.replaceFirst(RegExp(r'/+$'), '')}/Items/$itemId/Images/Primary'
+    '?maxHeight=300&api_key=${Uri.encodeQueryComponent(token)}';
+
 String? validateJellyfinServer(String? value) {
   final uri = Uri.tryParse((value ?? '').trim());
   if (uri == null ||

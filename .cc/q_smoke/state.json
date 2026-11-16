@@ -1,0 +1,13 @@
+{
+ "phase": "done",
+ "batch": 1,
+ "turn": 0,
+ "last_tool": null,
+ "last_text": "QUEUE OK",
+ "cost_usd": 0.1327,
+ "session_id": "474b1f2c-6c16-4d7c-8810-6bd579716ab6",
+ "result": "QUEUE OK",
+ "name": "q_smoke",
+ "updated": 1794811360,
+ "subtype": "success"
+}

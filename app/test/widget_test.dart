@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watch_together/home_screen.dart';
 import 'package:watch_together/local_copy.dart';
+import 'package:watch_together/media_library.dart';
 import 'package:watch_together/room_api.dart';
 import 'package:watch_together/room_ready.dart';
 import 'package:watch_together/theme.dart';
@@ -46,6 +48,24 @@ void main() {
     await tester.enterText(find.byType(TextField), invite);
     await tester.pump();
     await tester.pump();
+  }
+
+  Future<void> settle(WidgetTester tester) async {
+    for (var i = 0; i < 4; i++) {
+      await tester.pump();
+    }
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+
+  /// `Pick media`, then the empty `This computer` tab's `Choose file…`: the OS dialog's file plays
+  /// and the library closes on it.
+  Future<void> pickFile(WidgetTester tester) async {
+    await tester.tap(find.text('Pick media'));
+    await settle(tester);
+    expect(find.byType(MediaLibrary), findsOneWidget);
+    await tester.tap(find.widgetWithText(WtButton, 'Choose file…'));
+    await settle(tester);
+    expect(find.byType(MediaLibrary), findsNothing);
   }
 
   WtButton? joinButton(WidgetTester tester, String label) {
@@ -127,10 +147,10 @@ void main() {
       );
       expect(find.text('Open your copy to join'), findsOneWidget);
       expect(joinButton(tester, "Join Mika's room"), isNull);
+      expect(find.text('Choose file…'), findsNothing);
+      expect(find.widgetWithText(WtTextButton, 'Jellyfin'), findsNothing);
 
-      await tester.tap(find.text('Choose file…'));
-      await tester.pump();
-      await tester.pump();
+      await pickFile(tester);
       expect(find.text('Open your copy to join'), findsNothing);
       expect(joinButton(tester, "Join Mika's room")?.onPressed, isNotNull);
       expect(
@@ -186,10 +206,40 @@ void main() {
         'https://example.com/join/${token(roomCode, exp: inTenMinutes())}',
       );
       expect(find.text("Couldn't check"), findsOneWidget);
-      await tester.tap(find.text('Choose file…'));
-      await tester.pump();
-      await tester.pump();
+      await pickFile(tester);
       expect(joinButton(tester, 'Join room')?.onPressed, isNotNull);
+    });
+
+    testWidgets('Library in the brand column opens the library on its own', (
+      tester,
+    ) async {
+      useWindow(tester, desktopSizes.first);
+      await pumpHome(tester);
+      await tester.tap(find.text('Library'));
+      await settle(tester);
+      expect(find.byType(MediaLibrary), findsOneWidget);
+      expect(find.text('Nothing in this library yet'), findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await settle(tester);
+      expect(find.byType(MediaLibrary), findsNothing);
+      expect(find.text('Paste an invite to join'), findsOneWidget);
+    });
+
+    testWidgets('a file picked once is in This computer next time', (
+      tester,
+    ) async {
+      useWindow(tester, desktopSizes.first);
+      await pumpHome(tester, api: FakeRoomApi(info: liveRoom));
+      await paste(
+        tester,
+        'https://example.com/join/${token(roomCode, exp: inTenMinutes())}',
+      );
+      await pickFile(tester);
+      await tester.tap(find.text('Library'));
+      await settle(tester);
+      expect(find.text('movie-night_1080p.mkv'), findsOneWidget);
+      expect(find.text('Nothing in this library yet'), findsNothing);
     });
 
     for (final size in [...desktopSizes, tiledSize]) {
@@ -207,9 +257,7 @@ void main() {
           tester,
           'https://example.com/join/${token(roomCode, exp: inTenMinutes())}',
         );
-        await tester.tap(find.text('Choose file…'));
-        await tester.pump();
-        await tester.pump();
+        await pickFile(tester);
         expect(tester.takeException(), isNull);
       });
 

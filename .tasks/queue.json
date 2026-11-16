@@ -1,0 +1,28 @@
+[
+ {
+  "name": "q20",
+  "task": "TASK20.md",
+  "prompt": "Read TASK20.md and implement it. HARD RULES: run every command in the foreground (never run_in_background, you have no BashOutput tool); build/test with: cd app && nix shell nixpkgs#flutter -c bash -c 'flutter test && flutter analyze'; edits first, then tests. Do not stop at a plan.",
+  "turns": 40,
+  "batches": 3,
+  "status": "done",
+  "added": 1794811367,
+  "started": 1794811374,
+  "ended": 1794811880,
+  "phase": "done",
+  "result": "The queue's `Add` button now opens a two-entry menu, and Jellyfin items can be queued. `flutter test` passes (148 passed, 1 skipped: the live-server test). `flutter analyze` reports one info, and it isn't from this change: a deprecated `containsSemantics` call that was already in `room_view_test.dart`. `flutter build linux --debug` builds. Nothing is committed.\n\n**Files**\n- `lib/room_controls.dart"
+ },
+ {
+  "name": "q21",
+  "task": "TASK21.md",
+  "prompt": "Read TASK21.md and implement it. HARD RULES: run every command in the foreground (never run_in_background, you have no BashOutput tool); build/test with: cd app && nix shell nixpkgs#flutter -c bash -c 'flutter test && flutter analyze'; edits first, then tests, then goldens. Reuse the existing candy widgets and the sandbox's fake Jellyfin for tests. Do not stop at a plan.",
+  "turns": 60,
+  "batches": 4,
+  "status": "done",
+  "added": 1794811367,
+  "started": 1794811880,
+  "ended": 1794814911,
+  "phase": "done",
+  "result": "TASK21 is done. All 170 tests pass, the analyzer has nothing new, and `flutter build linux --debug` builds. The one analyzer note left is the `containsSemantics` deprecation in `test/room_view_test.dart:430`, which was there before this task. Nothing is committed yet.\n\n## The model as built (`app/lib/media.dart`)\n- **`MediaKind`** `{video, audio, live}` and **`MediaSourceKind`** `{local, jellyfin,"
+ }
+]

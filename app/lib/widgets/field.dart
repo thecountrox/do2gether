@@ -7,6 +7,7 @@ class WtField extends StatefulWidget {
   const WtField({
     super.key,
     required this.controller,
+    this.focusNode,
     this.hint,
     this.icon,
     this.iconColor = WtColors.pink,
@@ -19,6 +20,7 @@ class WtField extends StatefulWidget {
     this.onSubmitted,
   });
   final TextEditingController controller;
+  final FocusNode? focusNode;
   final String? hint;
   final IconData? icon;
   final Color iconColor;
@@ -68,6 +70,7 @@ class _WtFieldState extends State<WtField> {
           Expanded(
             child: TextField(
               controller: widget.controller,
+              focusNode: widget.focusNode,
               readOnly: widget.readOnly,
               autofocus: widget.autofocus,
               obscureText: widget.obscure,

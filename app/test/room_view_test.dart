@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watch_together/format.dart';
+import 'package:watch_together/media.dart';
 import 'package:watch_together/room_controls.dart';
+import 'package:watch_together/room_screen.dart' show queueItem;
 import 'package:watch_together/room_view.dart';
 import 'package:watch_together/theme.dart';
 import 'package:watch_together/widgets/button.dart';
@@ -38,8 +40,18 @@ RoomViewData video({
   invite: 'https://example.com/join/abc.sig',
   connected: connected,
   people: people,
-  nowPlaying: (title: 'movie-night_1080p.mkv', detail: '1:52:10'),
-  upNext: const [(title: 'episode-02_1080p.mkv', detail: '24:10')],
+  nowPlaying: (
+    title: 'movie-night_1080p.mkv',
+    detail: '1:52:10',
+    source: MediaSourceKind.local,
+  ),
+  upNext: const [
+    (
+      title: 'episode-02_1080p.mkv',
+      detail: '24:10',
+      source: MediaSourceKind.jellyfin,
+    ),
+  ],
   stage: StageMode.video,
   fileName: 'movie-night_1080p.mkv',
   positionMs: 724000,
@@ -78,6 +90,7 @@ void main() {
     VoidCallback? onFullscreen,
     VoidCallback? onToggleMute,
     VoidCallback? onOpenJellyfin,
+    VoidCallback? onAddToQueue,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -96,7 +109,7 @@ void main() {
             onToggleMute: onToggleMute ?? () {},
             onFullscreen: onFullscreen ?? () {},
             onSettings: () {},
-            onAddToQueue: () {},
+            onAddToQueue: onAddToQueue ?? () {},
           ),
         ),
       ),
@@ -261,6 +274,73 @@ void main() {
     expect(find.text('UP NEXT'), findsOneWidget);
     expect(find.text('Nothing queued'), findsNothing);
     expect(find.text('12:04 / 1:52:10'), findsOneWidget);
+  });
+
+  group('queue Add', () {
+    testWidgets('Add opens the queue route', (tester) async {
+      useWindow(tester, desktopSizes.first);
+      var adds = 0;
+      await pumpRoom(tester, video(), onAddToQueue: () => adds++);
+      await tester.tap(find.text('Add'));
+      await tester.pump();
+      expect(adds, 1);
+    });
+
+    test('a queued library item is remembered and sent under its own ref', () {
+      final known = <String, ({String name, int? durationMs})>{};
+      final sent = <(String, Map<String, Object?>)>[];
+      void send(String op, Map<String, Object?> args) => sent.add((op, args));
+      const jellyRef = 'jellyfin:jelly.example/$jellyItemId';
+      queueItem(
+        const MediaItem(
+          ref: jellyRef,
+          title: 'sample-room',
+          kind: MediaKind.video,
+          source: MediaSourceKind.jellyfin,
+          duration: Duration(seconds: 20),
+        ),
+        known: known,
+        send: send,
+      );
+      queueItem(LocalMediaSource.itemFor(hostCopy), known: known, send: send);
+      expect([for (final (op, _) in sent) op], ['queue_add', 'queue_add']);
+      expect(
+        [for (final (_, args) in sent) args],
+        [
+          {'item_ref': jellyRef},
+          {'item_ref': hostRef},
+        ],
+      );
+      expect(known[jellyRef], (name: 'sample-room', durationMs: 20000));
+      expect(known[hostRef], (
+        name: 'movie-night_1080p.mkv',
+        durationMs: hostCopy.duration!.inMilliseconds,
+      ));
+    });
+
+    testWidgets('Add is disabled while disconnected', (tester) async {
+      useWindow(tester, desktopSizes.first);
+      var adds = 0;
+      await pumpRoom(
+        tester,
+        video(connected: false),
+        onAddToQueue: () => adds++,
+      );
+      await tester.tap(find.text('Add'), warnIfMissed: false);
+      await tester.pump();
+      expect(adds, 0);
+    });
+
+    testWidgets('queue rows carry the Jellyfin or Local file chip', (
+      tester,
+    ) async {
+      useWindow(tester, desktopSizes.first);
+      await pumpRoom(tester, video());
+      // video(): a local file now playing, a Jellyfin item up next; the dock shows no chip.
+      expect(find.text('Local file'), findsOneWidget);
+      expect(find.text('Jellyfin'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
   });
 
   testWidgets('empty room: open-file stage, dimmed dock, nothing queued', (
@@ -445,29 +525,26 @@ void main() {
       ('scope', scopeAspect, 1440 / scopeAspect),
     ]) {
       for (final connected in [true, false]) {
-        testWidgets(
-          'a $name picture is the biggest rect, centred on black'
-          '${connected ? '' : ', banner or not'}',
-          (tester) async {
-            useWindow(tester, screen);
-            await pumpRoom(
-              tester,
-              video(fullscreen: true, connected: connected, aspect: aspect),
-            );
-            final stage = tester.getRect(find.byKey(roomStageKey));
-            expect(stage.width, 1440);
-            expect(stage.height, closeTo(height, 0.5));
-            expect(stage.center, offsetMoreOrLessEquals(const Offset(720, 450)));
-            expect(
-              find.byWidgetPredicate(
-                (w) => w is ColoredBox && w.color == Colors.black,
-              ),
-              findsWidgets,
-            );
-            expect(find.text('IN THIS ROOM'), findsNothing);
-            expect(tester.takeException(), isNull);
-          },
-        );
+        testWidgets('a $name picture is the biggest rect, centred on black'
+            '${connected ? '' : ', banner or not'}', (tester) async {
+          useWindow(tester, screen);
+          await pumpRoom(
+            tester,
+            video(fullscreen: true, connected: connected, aspect: aspect),
+          );
+          final stage = tester.getRect(find.byKey(roomStageKey));
+          expect(stage.width, 1440);
+          expect(stage.height, closeTo(height, 0.5));
+          expect(stage.center, offsetMoreOrLessEquals(const Offset(720, 450)));
+          expect(
+            find.byWidgetPredicate(
+              (w) => w is ColoredBox && w.color == Colors.black,
+            ),
+            findsWidgets,
+          );
+          expect(find.text('IN THIS ROOM'), findsNothing);
+          expect(tester.takeException(), isNull);
+        });
       }
     }
 
@@ -497,7 +574,10 @@ void main() {
           expect(dock(tester), 0);
           expect(opacityOf(tester, find.text("Mika's room")), 0);
           expect(noCursor, findsOneWidget);
-          expect(find.byTooltip('Ahead 10 seconds').hitTestable(), findsNothing);
+          expect(
+            find.byTooltip('Ahead 10 seconds').hitTestable(),
+            findsNothing,
+          );
           if (!playing) {
             expect(opacityOf(tester, find.text('Play for everyone')), 0);
             expect(find.text('Play for everyone').hitTestable(), findsNothing);
@@ -597,31 +677,32 @@ void main() {
       },
     );
 
-    testWidgets('Esc leaves, F toggles, and the hint fades without blocking a click', (
-      tester,
-    ) async {
-      useWindow(tester, screen);
-      final calls = <String>[];
-      await pumpRoom(
-        tester,
-        video(fullscreen: true),
-        onPause: () => calls.add('pause'),
-        onFullscreen: () => calls.add('full'),
-      );
-      final hint = find.text(hintText);
-      expect(opacityOf(tester, hint), 1);
-      await tester.tapAt(tester.getCenter(hint));
-      await tester.pump(kDoubleTapTimeout);
-      expect(calls, ['pause']);
+    testWidgets(
+      'Esc leaves, F toggles, and the hint fades without blocking a click',
+      (tester) async {
+        useWindow(tester, screen);
+        final calls = <String>[];
+        await pumpRoom(
+          tester,
+          video(fullscreen: true),
+          onPause: () => calls.add('pause'),
+          onFullscreen: () => calls.add('full'),
+        );
+        final hint = find.text(hintText);
+        expect(opacityOf(tester, hint), 1);
+        await tester.tapAt(tester.getCenter(hint));
+        await tester.pump(kDoubleTapTimeout);
+        expect(calls, ['pause']);
 
-      await tester.pump(fullscreenHintFor);
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(opacityOf(tester, hint), 0);
+        await tester.pump(fullscreenHintFor);
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(opacityOf(tester, hint), 0);
 
-      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
-      expect(calls, ['pause', 'full', 'full']);
-    });
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+        expect(calls, ['pause', 'full', 'full']);
+      },
+    );
 
     testWidgets('leaving restores the window layout, dock and pointer', (
       tester,

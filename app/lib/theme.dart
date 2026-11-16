@@ -176,7 +176,7 @@ class WtScaffold extends StatelessWidget {
   );
 }
 
-Route<void> wtRoute(Widget screen) => PageRouteBuilder<void>(
+Route<T> wtRoute<T>(Widget screen) => PageRouteBuilder<T>(
   transitionDuration: const Duration(milliseconds: 220),
   reverseTransitionDuration: const Duration(milliseconds: 220),
   pageBuilder: (_, _, _) => screen,

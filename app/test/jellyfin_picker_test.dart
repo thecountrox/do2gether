@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:watch_together/home_screen.dart';
 import 'package:watch_together/jellyfin.dart';
 import 'package:watch_together/jellyfin_picker.dart';
+import 'package:watch_together/media_library.dart';
 import 'package:watch_together/room_api.dart';
 import 'package:watch_together/theme.dart';
 import 'package:watch_together/widgets/button.dart';
@@ -50,8 +51,18 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
   }
 
+  /// `Pick media`, then the library's Jellyfin tab.
+  Future<void> openJellyfinTab(WidgetTester tester) async {
+    await tester.tap(find.text('Pick media'));
+    await settle(tester);
+    expect(find.byType(MediaLibrary), findsOneWidget);
+    await tester.tap(find.text('Jellyfin'));
+    await settle(tester);
+  }
+
+  /// `Connect Jellyfin` in the library: the sign-in form is the source's `ensureReady`.
   Future<void> openDialog(WidgetTester tester) async {
-    await tester.tap(find.widgetWithText(WtTextButton, 'Jellyfin'));
+    await tester.tap(find.widgetWithText(WtButton, 'Connect Jellyfin'));
     await settle(tester);
     expect(find.byType(JellyfinDialog), findsOneWidget);
   }
@@ -75,30 +86,34 @@ void main() {
   );
 
   testWidgets(
-    'sign in, list movies, pick one: the copy is set and Join enabled',
+    'sign in, browse movies, play one: the copy is set and Join enabled',
     (tester) async {
       final jellyfin = FakeJellyfinApi();
       await pumpHome(tester, jellyfin);
       expect(find.text('Open your copy to join'), findsOneWidget);
 
+      await openJellyfinTab(tester);
+      expect(find.text('Not signed in to Jellyfin'), findsOneWidget);
       await openDialog(tester);
       expect(find.text('SERVER'), findsOneWidget);
       expect(find.text('PASSWORD'), findsOneWidget);
 
       await signIn(tester);
+      expect(find.byType(JellyfinDialog), findsNothing);
       expect(jellyfin.connects, hasLength(1));
       expect(jellyfin.connects.single.server, jellyServer);
       expect(jellyfin.connects.single.user, 'root');
       expect(jellyfin.connects.single.pass, '');
       expect(find.text('Signed in as root on jelly.example'), findsOneWidget);
-      expect(find.text('PICK A MOVIE'), findsOneWidget);
       expect(find.text('Big Buck Bunny'), findsOneWidget);
       expect(find.text('sample-room'), findsOneWidget);
       expect(find.text('0:20'), findsOneWidget);
 
       await tester.tap(find.text('sample-room'));
+      await tester.pump();
+      await tester.tap(find.widgetWithText(WtButton, 'Play'));
       await settle(tester);
-      expect(find.byType(JellyfinDialog), findsNothing);
+      expect(find.byType(MediaLibrary), findsNothing);
       expect(find.text('Open your copy to join'), findsNothing);
       expect(
         find.textContaining(
@@ -112,21 +127,20 @@ void main() {
     },
   );
 
-  testWidgets('a saved sign-in opens straight on the movie list', (
-    tester,
-  ) async {
+  testWidgets('a saved sign-in opens straight on the movies', (tester) async {
     final jellyfin = FakeJellyfinApi(
       saved: FakeJellyfinSession(server: jellyServer, user: 'root'),
     );
     await pumpHome(tester, jellyfin);
-    await openDialog(tester);
-    expect(find.text('SERVER'), findsNothing);
-    expect(find.text('PICK A MOVIE'), findsOneWidget);
+    await openJellyfinTab(tester);
+    expect(find.text('Connect Jellyfin'), findsNothing);
+    expect(find.text('Big Buck Bunny'), findsOneWidget);
     expect(jellyfin.connects, isEmpty);
 
-    // Change goes back to the form with the saved server pre-filled.
+    // Change opens the form with the saved server pre-filled.
     await tester.tap(find.widgetWithText(WtTextButton, 'Change'));
     await settle(tester);
+    expect(find.byType(JellyfinDialog), findsOneWidget);
     expect(find.text('https://jelly.example'), findsOneWidget);
     expect(find.text('root'), findsOneWidget);
   });
@@ -136,14 +150,19 @@ void main() {
       error: const JellyfinException('Error processing request.', status: 401),
     );
     await pumpHome(tester, jellyfin);
+    await openJellyfinTab(tester);
     await openDialog(tester);
     await signIn(tester);
     expect(find.text('Error processing request. (HTTP 401)'), findsOneWidget);
-    expect(find.text('PICK A MOVIE'), findsNothing);
     expect(find.widgetWithText(WtButton, 'Connect'), findsOneWidget);
+
+    // Closing the form leaves the library asking to connect.
+    await tester.tap(find.byTooltip('Close'));
+    await settle(tester);
+    expect(find.text('Not signed in to Jellyfin'), findsOneWidget);
   });
 
-  testWidgets('a revoked saved token falls back to the form', (tester) async {
+  testWidgets('a revoked saved token falls back to connect', (tester) async {
     final jellyfin = FakeJellyfinApi(
       saved: FakeJellyfinSession(
         server: jellyServer,
@@ -152,14 +171,18 @@ void main() {
       ),
     );
     await pumpHome(tester, jellyfin);
-    await openDialog(tester);
+    await openJellyfinTab(tester);
+    expect(find.text('Not signed in to Jellyfin'), findsOneWidget);
     expect(find.text('Access token is invalid (HTTP 401)'), findsOneWidget);
+
+    await openDialog(tester);
     expect(find.text('https://jelly.example'), findsOneWidget);
   });
 
   testWidgets('a bad server URL is caught before any request', (tester) async {
     final jellyfin = FakeJellyfinApi();
     await pumpHome(tester, jellyfin);
+    await openJellyfinTab(tester);
     await openDialog(tester);
     await tester.enterText(dialogField(0), 'jelly.example');
     await tester.enterText(dialogField(1), 'root');

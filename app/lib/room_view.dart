@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'format.dart';
+import 'media.dart' show MediaSourceKind;
 import 'player.dart' show seekAtMs;
 import 'room_controls.dart';
 import 'theme.dart';
@@ -92,13 +93,11 @@ String readyDetail(List<RoomPerson> people) {
 
 enum StageMode { empty, waiting, video }
 
-/// Where a copy comes from: a file on disk, or a stream from the viewer's Jellyfin.
-enum MediaSource { local, jellyfin }
-
 /// `In sync`, or `Adjusting` while the drift policy is correcting.
 enum SyncState { inSync, adjusting }
 
-typedef QueueRow = ({String title, String detail});
+/// [source] is read off the item's ref, so it always matches what will open.
+typedef QueueRow = ({String title, String detail, MediaSourceKind source});
 
 /// Shown as a toast, then named on the stage while playback stays paused.
 class PauseNotice {
@@ -185,10 +184,10 @@ class RoomViewData {
   final String? fileName;
 
   /// Where our copy comes from; null without one.
-  final MediaSource? source;
+  final MediaSourceKind? source;
 
   /// Where the room's item comes from, for the right "open that file" action.
-  final MediaSource? roomSource;
+  final MediaSourceKind? roomSource;
   final int positionMs;
   final int durationMs;
   final int bufferedMs;
@@ -243,7 +242,7 @@ class RoomView extends StatefulWidget {
   final VoidCallback? onBack;
   final VoidCallback? onOpenFile;
 
-  /// Pick a Jellyfin item instead of a local file; null hides the option.
+  /// Pick from the library's Jellyfin tab instead of a local file; null hides the option.
   final VoidCallback? onOpenJellyfin;
   final VoidCallback? onPlay;
   final VoidCallback? onPause;
@@ -253,6 +252,8 @@ class RoomView extends StatefulWidget {
   final ValueChanged<double>? onVolume;
   final VoidCallback? onFullscreen;
   final VoidCallback? onSettings;
+
+  /// The queue's `Add`: opens the library in queue mode.
   final VoidCallback? onAddToQueue;
 
   /// Open the copy that failed again.
@@ -923,8 +924,8 @@ class _RoomViewState extends State<RoomView> {
   }
 
   /// The local-file or Jellyfin picker, whichever fits [source]; the file picker by default.
-  VoidCallback? _opener(MediaSource? source) =>
-      source == MediaSource.jellyfin && widget.onOpenJellyfin != null
+  VoidCallback? _opener(MediaSourceKind? source) =>
+      source == MediaSourceKind.jellyfin && widget.onOpenJellyfin != null
       ? widget.onOpenJellyfin
       : widget.onOpenFile;
 
@@ -1017,7 +1018,7 @@ class _RoomViewState extends State<RoomView> {
             : room.detail.isEmpty
             ? room.title
             : '${room.title} (${room.detail})';
-        final jellyfin = _d.roomSource == MediaSource.jellyfin;
+        final jellyfin = _d.roomSource == MediaSourceKind.jellyfin;
         return _StagePanel(
           outline: WtColors.yellow,
           tile: const WtDashed(
@@ -1532,11 +1533,11 @@ class _RoomCode extends StatelessWidget {
 
 class _SourceChip extends StatelessWidget {
   const _SourceChip({required this.source});
-  final MediaSource source;
+  final MediaSourceKind source;
 
   @override
   Widget build(BuildContext context) {
-    final jellyfin = source == MediaSource.jellyfin;
+    final jellyfin = source == MediaSourceKind.jellyfin;
     final color = jellyfin ? WtColors.pink : WtColors.tx3;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
@@ -2124,19 +2125,27 @@ class _QueueTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 2),
-              Text(
-                now
-                    ? (row.detail.isEmpty
-                          ? 'Now playing'
-                          : 'Now playing · ${row.detail}')
-                    : row.detail,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: now ? WtColors.pink : WtColors.tx3,
-                ),
+              Row(
+                children: [
+                  _SourceChip(source: row.source),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      now
+                          ? (row.detail.isEmpty
+                                ? 'Now playing'
+                                : 'Now playing · ${row.detail}')
+                          : row.detail,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: now ? WtColors.pink : WtColors.tx3,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

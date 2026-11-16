@@ -1,0 +1,5 @@
+== q20 start
+== q20 done
+== q21 start
+== q21 done
+{"queue": "left items", "verdicts": [{"name": "q20", "phase": "done", "result": "The queue's `Add` button now opens a two-entry menu, and Jellyfin items can be queued. `flutter test` passes (148 passed, 1 skipped: the live-server test). `flutter analyze` reports one info, and it isn't from this change: a deprecated `containsSemantics` call that was already in `room_view_test.dart`. `flutter build linux --debug` builds. Nothing is committed.\n\n**Files**\n- `lib/room_controls.dart"}, {"name": "q21", "phase": "done", "result": "TASK21 is done. All 170 tests pass, the analyzer has nothing new, and `flutter build linux --debug` builds. The one analyzer note left is the `containsSemantics` deprecation in `test/room_view_test.dart:430`, which was there before this task. Nothing is committed yet.\n\n## The model as built (`app/lib/media.dart`)\n- **`MediaKind`** `{video, audio, live}` and **`MediaSourceKind`** `{local, jellyfin,"}]}

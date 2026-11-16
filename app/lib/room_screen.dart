@@ -8,6 +8,8 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'format.dart';
 import 'links.dart';
 import 'local_copy.dart';
+import 'media.dart';
+import 'media_library.dart';
 import 'player.dart';
 import 'protocol.dart';
 import 'room_client.dart';
@@ -28,12 +30,23 @@ double _sessionVolume = 100;
 /// The copy we last tried to open: named on the error card and opened again by Try again.
 typedef _Attempt = ({
   String name,
-  MediaSource source,
+  MediaSourceKind source,
   Future<void> Function() open,
 });
 
-MediaSource _sourceOf(String ref) =>
-    ref.startsWith('jellyfin:') ? MediaSource.jellyfin : MediaSource.local;
+/// Where every library pick in queue mode ends: the item's title and duration are remembered under
+/// its ref so the row reads as a title, then that ref is queued as-is.
+void queueItem(
+  MediaItem item, {
+  required Map<String, ({String name, int? durationMs})> known,
+  required void Function(String op, Map<String, Object?> args) send,
+}) {
+  known[item.ref] = (
+    name: item.title,
+    durationMs: item.duration?.inMilliseconds,
+  );
+  send('queue_add', {'item_ref': item.ref});
+}
 
 class RoomScreen extends StatefulWidget {
   const RoomScreen({
@@ -44,8 +57,7 @@ class RoomScreen extends StatefulWidget {
     required this.name,
     this.clientId,
     this.initialCopy,
-    this.pickCopy = pickLocalCopy,
-    this.pickJellyfin,
+    this.sources = const [],
   });
 
   final Uri server;
@@ -56,10 +68,10 @@ class RoomScreen extends StatefulWidget {
 
   /// The copy chosen on Home or in the room-ready dialog; opened on entry.
   final LocalCopy? initialCopy;
-  final PickCopy pickCopy;
 
-  /// Opens the Jellyfin picker; null when the app has no Jellyfin support in this context.
-  final PickCopy? pickJellyfin;
+  /// The library's tabs, shared with Home so sign-ins and recent files carry over. Empty hides
+  /// the Jellyfin openers and the queue's `Add`.
+  final List<MediaSource> sources;
 
   @override
   State<RoomScreen> createState() => _RoomScreenState();
@@ -100,7 +112,7 @@ class _RoomScreenState extends State<RoomScreen> {
   int _pauseSerial = 0;
   DateTime? _pauseSentAt;
 
-  /// Names and durations of files we hashed here, so queue rows read as titles.
+  /// Names and durations of copies opened or queued here, so queue rows read as titles.
   final Map<String, ({String name, int? durationMs})> _known = {};
 
   bool get _joined => _client.status == ConnectionStatus.joined;
@@ -294,21 +306,21 @@ class _RoomScreenState extends State<RoomScreen> {
   Future<void> _openPath(String path) => _open(
     () => _player.open(path),
     name: baseName(path),
-    source: MediaSource.local,
+    source: MediaSourceKind.local,
   );
 
   /// A remote copy streams as-is under the ref it was picked with; nothing is hashed.
   Future<void> _openRemote(LocalCopy copy) => _open(
     () => _player.openSource(uri: copy.path, itemRef: copy.itemRef),
     name: copy.name,
-    source: _sourceOf(copy.itemRef),
+    source: sourceKindOf(copy.itemRef),
     durationMs: copy.duration?.inMilliseconds,
   );
 
   Future<void> _open(
     Future<void> Function() open, {
     required String name,
-    required MediaSource source,
+    required MediaSourceKind source,
     int? durationMs,
   }) async {
     final attempt = (
@@ -346,23 +358,31 @@ class _RoomScreenState extends State<RoomScreen> {
         : null;
   }
 
-  /// Same path as a local file once the picker hands back a remote copy.
-  Future<void> _openJellyfin() async {
-    final pick = widget.pickJellyfin;
-    if (pick == null) return;
-    final copy = await pick();
+  /// The library on its Jellyfin tab; whatever it hands back opens like any other copy.
+  Future<void> _openFromLibrary() async {
+    final copy = await showMediaLibrary(
+      context,
+      sources: widget.sources,
+      initial: MediaSourceKind.jellyfin,
+    );
     if (copy == null || !mounted) return;
-    await _openRemote(copy);
+    await (copy.isRemote ? _openRemote(copy) : _openPath(copy.path));
   }
 
+  /// The library in queue mode: it stays open, and each pick goes to the end of the queue.
   Future<void> _addToQueue() async {
-    final copy = await widget.pickCopy();
-    if (copy == null || !mounted) return;
-    _known[copy.itemRef] = (
-      name: copy.name,
-      durationMs: copy.duration?.inMilliseconds,
+    await showMediaLibrary(
+      context,
+      sources: widget.sources,
+      mode: LibraryMode.queue,
+      onQueue: (item) => queueItem(
+        item,
+        known: _known,
+        send: (op, args) {
+          if (mounted) _client.sendIntent(op, args);
+        },
+      ),
     );
-    _client.sendIntent('queue_add', {'item_ref': copy.itemRef});
   }
 
   void _play() {
@@ -562,6 +582,7 @@ class _RoomScreenState extends State<RoomScreen> {
       detail: duration != null && duration > 0
           ? fmtTime(duration)
           : (bytes == null ? '' : fmtBytes(bytes)),
+      source: sourceKindOf(ref),
     );
   }
 
@@ -624,8 +645,8 @@ class _RoomScreenState extends State<RoomScreen> {
           : _known[mine]?.name,
       source: error != null || _opening
           ? _attempt?.source
-          : (mine == null ? null : _sourceOf(mine)),
-      roomSource: anchor == null ? null : _sourceOf(anchor.itemRef),
+          : (mine == null ? null : sourceKindOf(mine)),
+      roomSource: anchor == null ? null : sourceKindOf(anchor.itemRef),
       positionMs: mine == null ? 0 : _roomPositionMs,
       durationMs: state.duration.inMilliseconds,
       bufferedMs: state.buffer.inMilliseconds,
@@ -657,7 +678,12 @@ class _RoomScreenState extends State<RoomScreen> {
       ),
       onBack: () => Navigator.of(context).pop(),
       onOpenFile: _openFile,
-      onOpenJellyfin: widget.pickJellyfin == null ? null : _openJellyfin,
+      onOpenJellyfin:
+          widget.sources.any(
+            (s) => s.kind == MediaSourceKind.jellyfin && s.available,
+          )
+          ? _openFromLibrary
+          : null,
       onPlay: _play,
       onPause: _pauseRoom,
       onSeekBy: _seekBy,
@@ -666,7 +692,7 @@ class _RoomScreenState extends State<RoomScreen> {
       onVolume: _setVolume,
       onFullscreen: _toggleFullscreen,
       onSettings: _showSettings,
-      onAddToQueue: _addToQueue,
+      onAddToQueue: widget.sources.isEmpty ? null : _addToQueue,
       onRetry: _attempt?.open,
       onReplay: _replay,
       onPlayNext: _playNext,
