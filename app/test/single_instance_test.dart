@@ -27,6 +27,20 @@ void main() {
     expect(await received.future.timeout(const Duration(seconds: 3)), invite);
   });
 
+  test('the port comes from the environment when it is sane', () {
+    expect(SingleInstance.parsePort('46000'), 46000);
+    expect(SingleInstance.parsePort(' 45999 '), 45999);
+    expect(SingleInstance.parsePort(null), isNull);
+    expect(SingleInstance.parsePort('nope'), isNull);
+    expect(SingleInstance.parsePort('80'), isNull, reason: 'privileged ports are refused');
+    expect(SingleInstance.parsePort('70000'), isNull);
+    expect(
+      SingleInstance.fromEnvironment({'DO2GETHER_INSTANCE_PORT': '46001'}).port,
+      46001,
+    );
+    expect(SingleInstance.fromEnvironment({}).port, SingleInstance.defaultPort);
+  });
+
   test('forwarding with nobody listening reports failure', () async {
     final port = 45950 + (DateTime.now().microsecond % 40);
     final lonely = SingleInstance(port: port);

@@ -52,6 +52,8 @@ class HomeScreen extends StatefulWidget {
     this.jellyfin = const HttpJellyfinApi(),
     this.initialInvite,
     this.forwardedInvites,
+    this.openLibrary = false,
+    this.libraryTab,
   });
   final RoomApi api;
   final PickCopy pickCopy;
@@ -62,6 +64,12 @@ class HomeScreen extends StatefulWidget {
 
   /// Invites that arrived from a second launch while this window was already open.
   final Stream<String>? forwardedInvites;
+
+  /// Launched with `--library`: open the library on the first frame instead of waiting for a click.
+  final bool openLibrary;
+
+  /// The tab to open it on (`jellyfin`, `local`, …), from the launch argument or the environment.
+  final String? libraryTab;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -108,9 +116,24 @@ class _HomeScreenState extends State<HomeScreen> {
       _onInvite(invite);
     }
     _forwarded = widget.forwardedInvites?.listen(_takeForwarded);
+    if (widget.openLibrary) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_pickMedia(initial: _libraryTabKind()));
+      });
+    }
   }
 
   StreamSubscription<String>? _forwarded;
+
+  /// `jellyfin` / `local` / `youtube` / `ytm` from the launch flag, as a source kind.
+  MediaSourceKind? _libraryTabKind() {
+    final name = (widget.libraryTab ?? '').trim().toLowerCase();
+    if (name.isEmpty) return null;
+    for (final kind in MediaSourceKind.values) {
+      if (kind.name == name) return kind;
+    }
+    return null;
+  }
 
   /// A later launch handed us an invite: show it without losing the room we are already in.
   void _takeForwarded(String text) {

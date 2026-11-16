@@ -82,8 +82,12 @@ abstract class MediaSource {
 
   Future<List<MediaItem>> browse({String query = ''});
 
-  /// The sign-in flow, if any.
+  /// The sign-in flow, if any. May show UI, so only call it from a user action.
   Future<void> ensureReady();
+
+  /// Picks up credentials already saved on this machine, without prompting. Safe to call from a
+  /// background refresh; the default does nothing.
+  Future<void> restoreSaved() async {}
 
   /// False lists the source with a `Soon` tag and never selects it.
   bool get available => true;
@@ -223,7 +227,7 @@ class JellyfinMediaSource extends MediaSource {
   /// Kept after the session is dropped, so the form opens on the same server and user.
   JellyfinSession? _previous;
   List<JellyfinItem>? _movies;
-  bool _restored = false;
+  Future<void>? _restoring;
 
   JellyfinSession? get session => _session;
 
@@ -245,10 +249,14 @@ class JellyfinMediaSource extends MediaSource {
     null => null,
   };
 
-  /// Picks up the sign-in saved on this machine, once.
-  Future<void> restore() async {
-    if (_restored) return;
-    _restored = true;
+  @override
+  Future<void> restoreSaved() => restore();
+
+  /// Picks up the sign-in saved on this machine, once — and is awaitable by every caller, so a
+  /// library asked to browse mid-restore waits for the answer instead of reading "not signed in".
+  Future<void> restore() => _restoring ??= _restoreOnce();
+
+  Future<void> _restoreOnce() async {
     try {
       final saved = await api.restore();
       if (_session == null && saved != null) _use(saved);

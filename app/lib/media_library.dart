@@ -151,6 +151,9 @@ class _MediaLibraryState extends State<MediaLibrary> {
     final source = _source;
     final seq = ++_seq;
     try {
+      // The saved sign-in can land after the first frame (Home restores it asynchronously). Without
+      // this, opening straight into a source showed its empty state for the whole visit.
+      if (source.available && !source.ready) await source.restoreSaved();
       final items = source.available && source.ready
           ? await source.browse(query: _query.text)
           : const <MediaItem>[];

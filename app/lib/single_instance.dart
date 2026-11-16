@@ -7,7 +7,21 @@ import 'dart:io';
 /// The first instance binds a loopback port; every later launch (which is what clicking a
 /// `do2gether://` link does when the app is already open) connects, hands over its invite, and exits.
 class SingleInstance {
-  SingleInstance({this.port = 45871});
+  SingleInstance({this.port = defaultPort});
+
+  /// The instance that reads `DO2GETHER_INSTANCE_PORT`: an agent desktop (or a second profile) can
+  /// run its own window side by side instead of handing its invite to the user's session.
+  factory SingleInstance.fromEnvironment([Map<String, String>? env]) {
+    final raw = (env ?? Platform.environment)['DO2GETHER_INSTANCE_PORT'];
+    return SingleInstance(port: parsePort(raw) ?? defaultPort);
+  }
+
+  static const int defaultPort = 45871;
+
+  static int? parsePort(String? raw) {
+    final n = int.tryParse((raw ?? '').trim());
+    return n != null && n > 1024 && n < 65536 ? n : null;
+  }
 
   final int port;
 
