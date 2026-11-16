@@ -1,0 +1,2 @@
+{"phase": "done", "batch": 1, "turns": 57, "cost_usd": 2.8539, "state": "/home/ubuntu/watch-together/.cc/t19b/state.json", "result": "Fullscreen is now an immersive viewing mode. `flutter test` is green (142 passed, 1 skipped), `flutter analyze` has no new issues, and `flutter build linux --debug` built.\n\n**What changed**\n- **Picture:** in fullscreen the video fills the largest 16:9 or 2.39:1 rectangle that fits, centred on pure black. It has no window margin or rounded corners, and the dock floats over it rather than pushing it"}
+done

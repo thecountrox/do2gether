@@ -652,7 +652,7 @@ class _RoomScreenState extends State<RoomScreen> {
       video: Video(
         controller: _player.video,
         controls: NoVideoControls,
-        fill: WtColors.board,
+        fill: _fullscreen ? Colors.black : WtColors.board,
         pauseUponEnteringBackgroundMode: false,
       ),
       onBack: () => Navigator.of(context).pop(),

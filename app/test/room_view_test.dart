@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,6 +30,8 @@ RoomViewData video({
   List<RoomPerson> people = crowd,
   PauseNotice? pause,
   String? waitingFor,
+  bool fullscreen = false,
+  double aspect = 16 / 9,
 }) => RoomViewData(
   room: roomCode,
   title: "Mika's room",
@@ -45,6 +48,8 @@ RoomViewData video({
   playing: playing,
   pause: pause,
   waitingFor: waitingFor,
+  fullscreen: fullscreen,
+  aspect: aspect,
 );
 
 const RoomViewData empty = RoomViewData(
@@ -396,6 +401,272 @@ void main() {
     await pumpRoom(tester, empty);
     expect(find.text('Or pick from Jellyfin'), findsNothing);
     expect(find.text('Open file'), findsOneWidget);
+  });
+
+  group('fullscreen', () {
+    const screen = Size(1440, 900);
+    const hintText = 'Esc to exit · F toggles';
+
+    /// A real mouse over the picture. Hover is what arms the idle timer (the `_pointerSeen` seam);
+    /// the timer runs on the test's fake clock, so `tester.pump(chromeHideAfter)` stands in for
+    /// 2.5 s of stillness without sleeping.
+    Future<TestGesture> point(WidgetTester tester) async {
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: const Offset(700, 400));
+      addTearDown(mouse.removePointer);
+      await mouse.moveTo(const Offset(704, 404));
+      await tester.pump();
+      return mouse;
+    }
+
+    /// The idle window on the fake clock, then the fade.
+    Future<void> idle(WidgetTester tester) async {
+      await tester.pump(chromeHideAfter);
+      await tester.pump(const Duration(milliseconds: 250));
+    }
+
+    double opacityOf(WidgetTester tester, Finder finder) => tester
+        .widget<AnimatedOpacity>(
+          find
+              .ancestor(of: finder, matching: find.byType(AnimatedOpacity))
+              .first,
+        )
+        .opacity;
+
+    double dock(WidgetTester tester) =>
+        opacityOf(tester, find.byKey(roomDockKey));
+
+    final noCursor = find.byWidgetPredicate(
+      (w) => w is MouseRegion && w.cursor == SystemMouseCursors.none,
+    );
+
+    for (final (name, aspect, height) in [
+      ('16:9', 16 / 9, 810.0),
+      ('scope', scopeAspect, 1440 / scopeAspect),
+    ]) {
+      for (final connected in [true, false]) {
+        testWidgets(
+          'a $name picture is the biggest rect, centred on black'
+          '${connected ? '' : ', banner or not'}',
+          (tester) async {
+            useWindow(tester, screen);
+            await pumpRoom(
+              tester,
+              video(fullscreen: true, connected: connected, aspect: aspect),
+            );
+            final stage = tester.getRect(find.byKey(roomStageKey));
+            expect(stage.width, 1440);
+            expect(stage.height, closeTo(height, 0.5));
+            expect(stage.center, offsetMoreOrLessEquals(const Offset(720, 450)));
+            expect(
+              find.byWidgetPredicate(
+                (w) => w is ColoredBox && w.color == Colors.black,
+              ),
+              findsWidgets,
+            );
+            expect(find.text('IN THIS ROOM'), findsNothing);
+            expect(tester.takeException(), isNull);
+          },
+        );
+      }
+    }
+
+    testWidgets('chrome stays up until a pointer is seen', (tester) async {
+      useWindow(tester, screen);
+      await pumpRoom(tester, video(fullscreen: true));
+      await idle(tester);
+      await idle(tester);
+      expect(dock(tester), 1);
+      expect(noCursor, findsNothing);
+    });
+
+    for (final playing in [true, false]) {
+      testWidgets(
+        'chrome and cursor hide after the idle window while '
+        '${playing ? 'playing' : 'paused'}; the corner pills stay; a move restores',
+        (tester) async {
+          useWindow(tester, screen);
+          await pumpRoom(tester, video(fullscreen: true, playing: playing));
+          final mouse = await point(tester);
+          await tester.pump(chromeHideAfter - const Duration(milliseconds: 1));
+          expect(dock(tester), 1);
+          expect(noCursor, findsNothing);
+
+          await tester.pump(const Duration(milliseconds: 1));
+          await tester.pump(const Duration(milliseconds: 250));
+          expect(dock(tester), 0);
+          expect(opacityOf(tester, find.text("Mika's room")), 0);
+          expect(noCursor, findsOneWidget);
+          expect(find.byTooltip('Ahead 10 seconds').hitTestable(), findsNothing);
+          if (!playing) {
+            expect(opacityOf(tester, find.text('Play for everyone')), 0);
+            expect(find.text('Play for everyone').hitTestable(), findsNothing);
+          }
+          // The owner's rule: the way out and the controls toggle never fade.
+          expect(find.text('Exit fullscreen').hitTestable(), findsOneWidget);
+          expect(find.text('Show controls').hitTestable(), findsOneWidget);
+
+          await mouse.moveBy(const Offset(12, 0));
+          await tester.pump();
+          expect(dock(tester), 1);
+          expect(noCursor, findsNothing);
+          expect(find.byTooltip('Ahead 10 seconds').hitTestable(), findsOne);
+        },
+      );
+    }
+
+    testWidgets('a key or a click brings the chrome back', (tester) async {
+      useWindow(tester, screen);
+      await pumpRoom(tester, video(fullscreen: true));
+      final mouse = await point(tester);
+      await idle(tester);
+      expect(dock(tester), 0);
+      await tester.sendKeyEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pump();
+      expect(dock(tester), 1);
+      expect(noCursor, findsNothing);
+
+      await idle(tester);
+      expect(dock(tester), 0);
+      await mouse.down(const Offset(704, 404));
+      await tester.pump();
+      expect(dock(tester), 1);
+      await mouse.up();
+      await tester.pump(kDoubleTapTimeout);
+    });
+
+    testWidgets('Show controls keeps the chrome up until it is turned off', (
+      tester,
+    ) async {
+      useWindow(tester, screen);
+      await pumpRoom(tester, video(fullscreen: true));
+      await point(tester);
+      await tester.tap(find.text('Show controls'));
+      await tester.pump();
+      await idle(tester);
+      await idle(tester);
+      expect(dock(tester), 1);
+      expect(noCursor, findsNothing);
+
+      await tester.tap(find.text('Show controls'));
+      await tester.pump();
+      expect(dock(tester), 1);
+      await idle(tester);
+      expect(dock(tester), 0);
+    });
+
+    testWidgets(
+      'click the picture to play or pause, double-click to leave; the dock keeps its clicks',
+      (tester) async {
+        useWindow(tester, screen);
+        final calls = <String>[];
+        Future<void> pump(bool playing) => pumpRoom(
+          tester,
+          video(fullscreen: true, playing: playing),
+          onPlay: () => calls.add('play'),
+          onPause: () => calls.add('pause'),
+          onSeekBy: (d) => calls.add('seek $d'),
+          onFullscreen: () => calls.add('full'),
+        );
+        await pump(true);
+        // Off centre, so the paused card never sits under it.
+        final picture =
+            tester.getRect(find.byKey(roomStageKey)).topLeft +
+            const Offset(200, 200);
+        await tester.tapAt(picture);
+        await tester.pump(kDoubleTapTimeout);
+        expect(calls, ['pause']);
+
+        await tester.tapAt(picture);
+        await tester.pump(const Duration(milliseconds: 80));
+        await tester.tapAt(picture);
+        await tester.pump(kDoubleTapTimeout);
+        expect(calls, ['pause', 'full']);
+
+        await tester.tap(find.text('+10s'));
+        await tester.pump(kDoubleTapTimeout);
+        await tester.tap(find.byTooltip('Pause (Space)'));
+        await tester.pump(kDoubleTapTimeout);
+        expect(calls, ['pause', 'full', 'seek 10000', 'pause']);
+
+        await pump(false);
+        await tester.tapAt(picture);
+        await tester.pump(kDoubleTapTimeout);
+        expect(calls.last, 'play');
+        expect(calls, hasLength(5));
+      },
+    );
+
+    testWidgets('Esc leaves, F toggles, and the hint fades without blocking a click', (
+      tester,
+    ) async {
+      useWindow(tester, screen);
+      final calls = <String>[];
+      await pumpRoom(
+        tester,
+        video(fullscreen: true),
+        onPause: () => calls.add('pause'),
+        onFullscreen: () => calls.add('full'),
+      );
+      final hint = find.text(hintText);
+      expect(opacityOf(tester, hint), 1);
+      await tester.tapAt(tester.getCenter(hint));
+      await tester.pump(kDoubleTapTimeout);
+      expect(calls, ['pause']);
+
+      await tester.pump(fullscreenHintFor);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(opacityOf(tester, hint), 0);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+      expect(calls, ['pause', 'full', 'full']);
+    });
+
+    testWidgets('leaving restores the window layout, dock and pointer', (
+      tester,
+    ) async {
+      useWindow(tester, screen);
+      await pumpRoom(tester, video());
+      final window = tester.getRect(find.byKey(roomStageKey));
+      Decoration? dockDecoration() => tester
+          .widget<Container>(
+            find
+                .descendant(
+                  of: find.byKey(roomDockKey),
+                  matching: find.byType(Container),
+                )
+                .first,
+          )
+          .decoration;
+      final windowDock = dockDecoration();
+
+      await pumpRoom(tester, video(fullscreen: true));
+      await point(tester);
+      await tester.tap(find.text('Show controls'));
+      await tester.tap(find.text('Show controls'));
+      await idle(tester);
+      expect(noCursor, findsOneWidget);
+
+      await pumpRoom(tester, video());
+      expect(noCursor, findsNothing);
+      expect(tester.getRect(find.byKey(roomStageKey)), window);
+      expect(dockDecoration(), windowDock);
+      expect(tester.getBottomLeft(find.byKey(roomDockKey)).dy, screen.height);
+      expect(find.text('IN THIS ROOM'), findsOneWidget);
+      expect(find.text('Exit fullscreen'), findsNothing);
+      expect(find.text(hintText), findsNothing);
+      await idle(tester);
+      await idle(tester);
+      expect(noCursor, findsNothing);
+      expect(find.byTooltip('Ahead 10 seconds').hitTestable(), findsOne);
+
+      // Back in: the hint returns and Show controls starts off again.
+      await pumpRoom(tester, video(fullscreen: true));
+      expect(opacityOf(tester, find.text(hintText)), 1);
+      await idle(tester);
+      expect(dock(tester), 0);
+    });
   });
 
   for (final size in [...desktopSizes, tiledSize]) {

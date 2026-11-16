@@ -29,8 +29,19 @@ const Key roomStageKey = ValueKey('room-stage');
 /// The dock, for the fullscreen auto-hide tests.
 const Key roomDockKey = ValueKey('room-dock');
 
-/// Fullscreen chrome (dock, exit button, cursor) hides after this long without pointer movement.
+/// Fullscreen chrome (dock, room cluster, cursor) hides after this long without pointer movement
+/// or a key, playing or paused. The corner pills never hide.
 const Duration chromeHideAfter = Duration(milliseconds: 2500);
+
+/// How long the "Esc to exit · F toggles" hint stays up after entering fullscreen.
+const Duration fullscreenHintFor = Duration(seconds: 2);
+
+/// Fullscreen glass: the room cluster, the hint and the corner pills sit on this, never on a bar.
+const BoxDecoration _glass = BoxDecoration(
+  color: Color(0x99140A20),
+  borderRadius: BorderRadius.all(Radius.circular(WtRadius.pill)),
+  border: Border.fromBorderSide(BorderSide(color: WtColors.line, width: 1.5)),
+);
 
 enum PersonState { synced, buffering, drifting, noFile, reconnecting }
 
@@ -276,10 +287,24 @@ class _RoomViewState extends State<RoomView> {
   bool _overChrome = false;
   Timer? _idleTimer;
 
+  /// `Show controls` is on: the fullscreen chrome stays up until it is turned off.
+  bool _pinned = false;
+
+  /// The one-off "Esc to exit · F toggles" hint after entering fullscreen.
+  bool _hint = false;
+  Timer? _hintTimer;
+
   RoomViewData get _d => widget.data;
   bool get _hasFile => _d.stage == StageMode.video;
   bool get _live => _hasFile && _d.connected;
   bool get _chromeHidden => _d.fullscreen && _idle;
+
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_onKey);
+    if (_d.fullscreen) _showHint();
+  }
 
   @override
   void didUpdateWidget(RoomView old) {
@@ -292,6 +317,17 @@ class _RoomViewState extends State<RoomView> {
       _toast = true;
       _toastTimer = Timer(const Duration(seconds: 4), _hideToast);
     }
+    if (old.data.fullscreen != _d.fullscreen) {
+      // A control clicked on the way in or out never reports its exit; every session starts unpinned.
+      _overChrome = false;
+      _pinned = false;
+      if (_d.fullscreen) {
+        _showHint();
+      } else {
+        _hintTimer?.cancel();
+        _hint = false;
+      }
+    }
     if (old.data.fullscreen != _d.fullscreen ||
         old.data.playing != _d.playing) {
       _idle = false;
@@ -301,10 +337,26 @@ class _RoomViewState extends State<RoomView> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
     _toastTimer?.cancel();
     _copyTimer?.cancel();
     _idleTimer?.cancel();
+    _hintTimer?.cancel();
     super.dispose();
+  }
+
+  void _showHint() {
+    _hint = true;
+    _hintTimer?.cancel();
+    _hintTimer = Timer(fullscreenHintFor, () {
+      if (mounted) setState(() => _hint = false);
+    });
+  }
+
+  /// Any key, bound or not, counts as activity. Never consumes the event.
+  bool _onKey(KeyEvent event) {
+    _wake();
+    return false;
   }
 
   void _hideToast() {
@@ -326,12 +378,13 @@ class _RoomViewState extends State<RoomView> {
     _armIdle();
   }
 
-  /// Hides the chrome after [chromeHideAfter] in fullscreen, while playing and not over a control.
+  /// Hides the chrome after [chromeHideAfter] in fullscreen, playing or paused, unless
+  /// `Show controls` is on or the pointer rests on a control.
   void _armIdle() {
     _idleTimer?.cancel();
-    if (!_d.fullscreen || !_pointerSeen) return;
+    if (!_d.fullscreen || !_pointerSeen || _pinned) return;
     _idleTimer = Timer(chromeHideAfter, () {
-      if (!mounted || !_d.fullscreen || !_d.playing || _overChrome) return;
+      if (!mounted || !_d.fullscreen || _pinned || _overChrome) return;
       setState(() => _idle = true);
     });
   }
@@ -339,6 +392,14 @@ class _RoomViewState extends State<RoomView> {
   void _chromeHover(bool over) {
     _overChrome = over;
     if (!over) _armIdle();
+  }
+
+  void _togglePinned() {
+    setState(() {
+      _pinned = !_pinned;
+      _idle = false;
+    });
+    _armIdle();
   }
 
   void _showShortcuts() => showShortcutSheet(context);
@@ -385,14 +446,18 @@ class _RoomViewState extends State<RoomView> {
       },
       child: Focus(
         autofocus: true,
-        child: MouseRegion(
+        // Clicks and drags count as activity too, so a long scrub never fades out mid-drag.
+        child: Listener(
+          onPointerDown: (_) => _wake(),
+          onPointerMove: (_) => _wake(),
+          child: MouseRegion(
           cursor: _chromeHidden ? SystemMouseCursors.none : MouseCursor.defer,
           onHover: (_) {
             _pointerSeen = true;
             _wake();
           },
           child: ColoredBox(
-            color: WtColors.board,
+            color: _d.fullscreen ? Colors.black : WtColors.board,
             child: LayoutBuilder(
               builder: (context, box) {
                 final compact = box.maxWidth < wtCompactWidth;
@@ -441,6 +506,7 @@ class _RoomViewState extends State<RoomView> {
               },
             ),
           ),
+        ),
         ),
       ),
     );
@@ -493,57 +559,201 @@ class _RoomViewState extends State<RoomView> {
     ],
   );
 
-  /// The picture fills the screen; the dock and an exit button float over it and fade out
-  /// while the pointer rests.
-  Widget _fullscreenLayout({required bool compact}) {
+  /// Fullscreen chrome: fades to nothing and stops taking clicks while idle. A no-op in the window.
+  Widget _fade(Widget child) {
     final hidden = _chromeHidden;
-    Widget chrome(Widget child) => MouseRegion(
-      onEnter: (_) => _chromeHover(true),
-      onExit: (_) => _chromeHover(false),
-      child: IgnorePointer(
-        ignoring: hidden,
-        child: AnimatedOpacity(
-          opacity: hidden ? 0 : 1,
-          duration: const Duration(milliseconds: 200),
-          child: child,
-        ),
+    return IgnorePointer(
+      ignoring: hidden,
+      child: AnimatedOpacity(
+        opacity: hidden ? 0 : 1,
+        duration: const Duration(milliseconds: 200),
+        child: child,
       ),
     );
-    return Column(
-      children: [
-        if (!_d.connected) _banner(),
-        Expanded(
-          child: Stack(
-            children: [
-              Positioned.fill(child: _stageArea()),
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: chrome(
-                  KeyedSubtree(key: roomDockKey, child: _dock(compact: compact)),
+  }
+
+  /// Resting the pointer on a control keeps the chrome up.
+  Widget _hover(Widget child) => MouseRegion(
+    onEnter: (_) => _chromeHover(true),
+    onExit: (_) => _chromeHover(false),
+    child: child,
+  );
+
+  /// The picture letterboxes on black behind everything, never moved by the chrome. The dock
+  /// floats as a pill over a scrim and fades with the room cluster; the corner pills never fade.
+  Widget _fullscreenLayout({required bool compact}) => Stack(
+    children: [
+      // Clicks on the picture or its black bars land here (the video ignores the pointer in
+      // fullscreen). Anything drawn above, the dock included, keeps its own clicks.
+      Positioned.fill(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _playPause,
+          onDoubleTap: _hasFile ? widget.onFullscreen : null,
+          child: const SizedBox.expand(),
+        ),
+      ),
+      Positioned.fill(child: _stageArea()),
+      Positioned(
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: 260,
+        child: IgnorePointer(
+          child: _fade(
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0x00000000), Color(0x8C000000), Color(0xCC000000)],
+                  stops: [0, 0.6, 1],
                 ),
               ),
-              Positioned(
-                top: 16,
-                right: 16,
-                child: chrome(
-                  WtButton(
-                    label: 'Exit fullscreen',
-                    icon: Icons.fullscreen_exit_rounded,
-                    style: WtButtonStyle.ghost,
-                    size: WtButtonSize.small,
-                    tooltip: 'Exit fullscreen (Esc)',
-                    onPressed: widget.onFullscreen,
-                  ),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
-      ],
-    );
-  }
+      ),
+      Positioned(
+        left: 32,
+        right: 32,
+        bottom: 28,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1280),
+            child: _hover(
+              _fade(
+                KeyedSubtree(key: roomDockKey, child: _dock(compact: compact)),
+              ),
+            ),
+          ),
+        ),
+      ),
+      Positioned(
+        left: 0,
+        right: 0,
+        top: 0,
+        child: Column(
+          children: [
+            if (!_d.connected) _banner(),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Stack(
+                alignment: Alignment.topCenter,
+                children: [
+                  Align(
+                    alignment: Alignment.topLeft,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 420),
+                      child: _hover(_fade(_roomCluster())),
+                    ),
+                  ),
+                  IgnorePointer(
+                    child: AnimatedOpacity(
+                      opacity: _hint ? 1 : 0,
+                      duration: const Duration(milliseconds: 400),
+                      child: Container(
+                        height: 36,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        alignment: Alignment.center,
+                        decoration: _glass,
+                        child: const Text(
+                          'Esc to exit · F toggles',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: WtColors.tx2,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Align(
+                    alignment: Alignment.topRight,
+                    child: _hover(_cornerPills()),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+
+  /// Top left, fades with the chrome: which room, and how many people are in it.
+  Widget _roomCluster() => Tooltip(
+    message: readyDetail(_d.people),
+    child: Container(
+      height: 36,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: _glass,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: Text(
+              _d.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                color: WtColors.text,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Semantics(
+            label: '${_d.people.length} in the room',
+            excludeSemantics: true,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.people_alt_rounded,
+                  size: 16,
+                  color: WtColors.tx3,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '${_d.people.length}',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: WtColors.tx2,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  /// Top right for the whole fullscreen session, never faded: nobody waits for chrome to find
+  /// the way out or the controls.
+  Widget _cornerPills() => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      _CornerPill(
+        label: 'Show controls',
+        icon: _pinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
+        tooltip: _pinned ? 'Let the controls fade' : 'Keep the controls up',
+        on: _pinned,
+        onTap: _togglePinned,
+      ),
+      const SizedBox(width: 8),
+      _CornerPill(
+        label: 'Exit fullscreen',
+        icon: Icons.fullscreen_exit_rounded,
+        tooltip: 'Exit fullscreen (Esc)',
+        onTap: widget.onFullscreen,
+      ),
+    ],
+  );
 
   Widget _topBar({required bool compact}) {
     final total = _d.people.length;
@@ -683,29 +893,34 @@ class _RoomViewState extends State<RoomView> {
     ),
   );
 
-  Widget _stageArea() => WtBackdrop(
-    color: WtColors.board,
-    child: Padding(
-      padding: EdgeInsets.all(_d.fullscreen ? 0 : WtSpace.window),
-      child: LayoutBuilder(
-        builder: (context, box) {
-          final aspect = _hasFile ? stageAspect(_d.aspect) : 16 / 9;
-          final width = math.min(
-            math.min(box.maxWidth, _d.fullscreen ? box.maxWidth : 1072.0),
-            box.maxHeight * aspect,
-          );
-          return Center(
-            child: SizedBox(
-              key: roomStageKey,
-              width: width,
-              height: width / aspect,
-              child: _stage(),
-            ),
-          );
-        },
+  Widget _stageArea() {
+    final stage = LayoutBuilder(
+      builder: (context, box) {
+        final aspect = _hasFile ? stageAspect(_d.aspect) : 16 / 9;
+        final width = math.min(
+          math.min(box.maxWidth, _d.fullscreen ? box.maxWidth : 1072.0),
+          box.maxHeight * aspect,
+        );
+        return Center(
+          child: SizedBox(
+            key: roomStageKey,
+            width: width,
+            height: width / aspect,
+            child: _stage(),
+          ),
+        );
+      },
+    );
+    // Fullscreen: straight onto the black, no backdrop and no window margin.
+    if (_d.fullscreen) return stage;
+    return WtBackdrop(
+      color: WtColors.board,
+      child: Padding(
+        padding: const EdgeInsets.all(WtSpace.window),
+        child: stage,
       ),
-    ),
-  );
+    );
+  }
 
   /// The local-file or Jellyfin picker, whichever fits [source]; the file picker by default.
   VoidCallback? _opener(MediaSource? source) =>
@@ -754,12 +969,20 @@ class _RoomViewState extends State<RoomView> {
     }
     switch (_d.stage) {
       case StageMode.video:
+        final full = _d.fullscreen;
         return Stack(
           fit: StackFit.expand,
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: ColoredBox(color: WtColors.board, child: widget.video),
+            // In fullscreen, clicks pass through the picture to the stage's play/pause.
+            IgnorePointer(
+              ignoring: full,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(full ? 0 : 10),
+                child: ColoredBox(
+                  color: full ? Colors.black : WtColors.board,
+                  child: widget.video,
+                ),
+              ),
             ),
             ?_videoOverlay(),
           ],
@@ -918,7 +1141,9 @@ class _RoomViewState extends State<RoomView> {
           'Paused at $at. Anyone can press play.',
         ),
       };
-      return Center(
+      // In fullscreen the paused card is chrome: it fades with the dock.
+      return _fade(
+        Center(
         child: _StageNote(
           lead: who == null || who == 'You'
               ? const Icon(
@@ -938,22 +1163,38 @@ class _RoomViewState extends State<RoomView> {
             ),
           ],
         ),
+        ),
       );
     }
     return null;
   }
 
   /// [compact] drops the now-playing title (it is in the queue sheet) so the scrubber keeps its width.
+  /// In fullscreen the same controls float as a translucent pill instead of a bar.
   Widget _dock({required bool compact}) {
     final off = _offReason;
     String tip(String what) => off == null ? what : '$what · $off';
     return Container(
       height: 88,
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      decoration: const BoxDecoration(
-        color: WtColors.plum2,
-        border: Border(top: BorderSide(color: WtColors.line, width: 2)),
-      ),
+      padding: EdgeInsets.symmetric(horizontal: _d.fullscreen ? 28 : 24),
+      decoration: _d.fullscreen
+          ? BoxDecoration(
+              color: const Color(0xD91A0E27),
+              borderRadius: BorderRadius.circular(WtRadius.pill),
+              border: Border.all(color: WtColors.line, width: 2),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x99000000),
+                  offset: Offset(0, 16),
+                  blurRadius: 40,
+                  spreadRadius: -12,
+                ),
+              ],
+            )
+          : const BoxDecoration(
+              color: WtColors.plum2,
+              border: Border(top: BorderSide(color: WtColors.line, width: 2)),
+            ),
       child: Row(
         children: [
           if (!compact) ...[
@@ -1191,6 +1432,56 @@ class _SkipChip extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// A quiet glass pill for the fullscreen corner: always readable, low enough in contrast that it
+/// does not fight the picture. [on] makes it a toggle.
+class _CornerPill extends StatelessWidget {
+  const _CornerPill({
+    required this.label,
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    this.on,
+  });
+  final String label;
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onTap;
+  final bool? on;
+
+  @override
+  Widget build(BuildContext context) {
+    final lit = on ?? false;
+    return Semantics(
+      toggled: on,
+      child: WtTap(
+        onTap: onTap,
+        radius: 18,
+        tooltip: tooltip,
+        child: Container(
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: _glass,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 17, color: lit ? WtColors.pink : WtColors.tx3),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  color: lit ? WtColors.tx2 : WtColors.tx3,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// The room code as one labelled chip. Key caps are for keys (the shortcut sheet), not codes.

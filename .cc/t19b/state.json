@@ -1,0 +1,13 @@
+{
+ "phase": "done",
+ "batch": 1,
+ "turn": 57,
+ "last_tool": "Bash",
+ "last_text": "rome, so it fades with the dock rather than sitting on the paused frame.\n- **No pause on idle:** the chrome hides even while paused, as the task asked.\n- **Not added:** auto-hiding the corner pills after a longer delay, and a key to toggle `Show controls`. Neither was asked for.\n\nNothing is committed. The changes are in `room_view.dart`, `room_screen.dart`, the two test files and the two new PNGs.",
+ "cost_usd": 2.8539,
+ "session_id": "69cbdcd8-a563-4725-a3b7-e8abda39e796",
+ "result": "Fullscreen is now an immersive viewing mode. `flutter test` is green (142 passed, 1 skipped), `flutter analyze` has no new issues, and `flutter build linux --debug` built.\n\n**What changed**\n- **Picture:** in fullscreen the video fills the largest 16:9 or 2.39:1 rectangle that fits, centred on pure black. It has no window margin or rounded corners, and the dock floats over it rather than pushing it off centre. At 1440\u00d7900 that's a 1440\u00d7810 picture with 45 px black bars. The black fill is also applied in `room_screen.dart`.\n- **Controls (owner requirement):**\n  - The transport is now a floating translucent pill, 32 px from the sides and 28 px from the bottom, over a soft 260 px fade at the bottom of the screen. All the existing dock content is kept.\n  - Top-left is a small glass pill with the room title and people count.\n  - Top-right are `Show controls` and `Exit fullscreen` pills that never fade, in low contrast. `Show controls` keeps everything up until you turn it off.\n- **Auto-hide:** after 2.5 s with no pointer movement or key, the chrome fades and the cursor really disappears (`SystemMouseCursors.none`). This happens whether playing or paused, and the paused card fades too. Any pointer move, click or key brings it back, and the chrome doesn't hide while the pointer is over it.\n- **Stage clicks:** clicking the picture plays/pauses and double-clicking toggles fullscreen. In fullscreen the video lets clicks pass through to the stage, and the dock and pills sit above it so they keep their own clicks.\n- **Keys and hint:** `Esc` exits and `F` toggles, as before. On entering fullscreen, \"Esc to exit \u00b7 F toggles\" shows for 2 s and then fades; clicks pass straight through it.\n- **Leaving fullscreen:** the normal layout, dock bar and cursor come back, the pin resets, and the hint shows again on the next entry. The existing room goldens re-rendered pixel-identical, so the normal layout is unchanged.\n\n**How idle is driven in tests:** the timer is a normal `Timer`, so the t",
+ "name": "t19b",
+ "updated": 1794762531,
+ "subtype": "success"
+}
