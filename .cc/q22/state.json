@@ -1,0 +1,13 @@
+{
+ "phase": "done",
+ "batch": 1,
+ "turn": 67,
+ "last_tool": "TodoWrite",
+ "last_text": "library_no_match_1440.png` (the \"No matches\" state, with the \u00d7 visible in the field)\n\nThe queue-mode golden used to queue `Sintel`, which is now off-screen at 856. It queues `Elephants Dream` from the first row instead.\n\n**Follow-up, not done:** the space reserved for the caption is 58 px but the caption only uses about 49, so posters are about 9 px taller than 2:3. They're cropped, not stretched.",
+ "cost_usd": 2.3395,
+ "session_id": "46505263-6f54-4ee1-b04a-ead4b255deaa",
+ "result": "All five items are done. `flutter test` passes with 176 tests and 1 skipped (the live-server test); that was 170 before. `flutter analyze` shows only the old `containsSemantics` deprecation note in `test/room_view_test.dart:430`, and `flutter build linux --debug` builds. Nothing is committed.\n\n**1. Grid density.** Cards are capped at 220 px wide. The column count is however many fit, with a minimum of 2. The gap between cards grows with the window, from 20 to 36 px. Leftover width goes on both sides so the row is centred, and posters are never stretched. That gives 5 columns at 1440 and 3 at 856.\n\n**2. Tabs.** Only the selected tab is filled: a light fill with dark text, the highest contrast on the screen. The other tabs are outlines with no fill. `Soon` tabs are dimmed and keep their tag.\n\n**3. Search.** A clear \u00d7 now sits inside the field when there's text, next to the `/` badge. Clicking it empties the search and puts the cursor back in the field. The field now takes all the width between the title and the right edge. The no-matches `Clear search` button does the same thing as the \u00d7.\n- The \u00d7 the reviewer saw outside the field was the library's Close button (Esc), not a search clear; there wasn't one before. Close stays where it was, now 24 px from the field instead of 16.\n\n**4. Play button.** On hover or selection, a dark overlay now covers the whole poster, with `Play` / `Queue` centred on it. The title and duration sit below the poster and are never covered. The bottom of the art (where real posters print their title) stays free.\n\n**5. Real posters.** The new test gives the library a source whose item has a real Jellyfin poster URL, and a poster loader that fails at once with no network. It checks:\n- an `Image` is built for exactly that URL;\n- the default loader would request that same URL;\n- the load really failed;\n- the gradient and film icon are still showing, with no broken-image box and no error.\n\nThe fallback code was already in place, so this item needed",
+ "name": "q22",
+ "updated": 1794816358,
+ "subtype": "success"
+}

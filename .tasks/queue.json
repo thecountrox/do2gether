@@ -24,5 +24,18 @@
   "ended": 1794814911,
   "phase": "done",
   "result": "TASK21 is done. All 170 tests pass, the analyzer has nothing new, and `flutter build linux --debug` builds. The one analyzer note left is the `containsSemantics` deprecation in `test/room_view_test.dart:430`, which was there before this task. Nothing is committed yet.\n\n## The model as built (`app/lib/media.dart`)\n- **`MediaKind`** `{video, audio, live}` and **`MediaSourceKind`** `{local, jellyfin,"
+ },
+ {
+  "name": "q22",
+  "task": "TASK22.md",
+  "prompt": "Read TASK22.md and implement it. HARD RULES: every command in the foreground (never run_in_background, no BashOutput tool); build/test with: cd app && nix shell nixpkgs#flutter -c bash -c 'flutter test && flutter analyze'; edits first, then tests, then update goldens. Do not stop at a plan.",
+  "turns": 40,
+  "batches": 3,
+  "status": "done",
+  "added": 1794815416,
+  "started": 1794815423,
+  "ended": 1794816359,
+  "phase": "done",
+  "result": "All five items are done. `flutter test` passes with 176 tests and 1 skipped (the live-server test); that was 170 before. `flutter analyze` shows only the old `containsSemantics` deprecation note in `test/room_view_test.dart:430`, and `flutter build linux --debug` builds. Nothing is committed.\n\n**1. Grid density.** Cards are capped at 220 px wide. The column count is however many fit, with a minimu"
  }
 ]

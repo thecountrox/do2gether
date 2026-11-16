@@ -92,6 +92,8 @@ class _MediaLibraryState extends State<MediaLibrary> {
   double _rowExtent = 0;
 
   static const _connecting = 'connect';
+  static const _maxTile = 220.0;
+  static const _minColumns = 2;
   static const _muted = TextStyle(
     fontSize: 14,
     height: 1.45,
@@ -362,7 +364,25 @@ class _MediaLibraryState extends State<MediaLibrary> {
           _select(_selected ?? 0);
         }
       },
-      trailing: const _KeyHint('/'),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_query.text.isNotEmpty) ...[
+            WtTap(
+              onTap: _clearSearch,
+              radius: 8,
+              tooltip: 'Clear search',
+              semanticLabel: 'Clear search',
+              child: const SizedBox.square(
+                dimension: 28,
+                child: Icon(Icons.close_rounded, size: 18, color: WtColors.tx3),
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
+          const _KeyHint('/'),
+        ],
+      ),
     );
     final end = [
       if (_queueMode && _queued.isNotEmpty) ...[
@@ -377,8 +397,11 @@ class _MediaLibraryState extends State<MediaLibrary> {
       if (_queueMode)
         WtButton(label: 'Done', onPressed: _close)
       else
-        WtIconButton(
-          icon: Icons.close_rounded,
+        WtButton(
+          label: 'Close',
+          trailingIcon: Icons.close_rounded,
+          style: WtButtonStyle.ghost,
+          size: WtButtonSize.small,
           tooltip: 'Close (Esc)',
           onPressed: _close,
         ),
@@ -401,13 +424,22 @@ class _MediaLibraryState extends State<MediaLibrary> {
     }
     return Row(
       children: [
-        Expanded(child: title),
-        const SizedBox(width: 24),
-        SizedBox(width: 380, child: search),
-        const SizedBox(width: 16),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: title,
+        ),
+        const SizedBox(width: 32),
+        Expanded(child: search),
+        const SizedBox(width: WtSpace.xl),
         ...end,
       ],
     );
+  }
+
+  void _clearSearch() {
+    _query.clear();
+    _search.requestFocus();
+    _reload(fresh: false);
   }
 
   Widget _tabs(bool narrow) {
@@ -505,10 +537,7 @@ class _MediaLibraryState extends State<MediaLibrary> {
           WtButton(
             label: 'Clear search',
             style: WtButtonStyle.ghost,
-            onPressed: () {
-              _query.clear();
-              _reload(fresh: false);
-            },
+            onPressed: _clearSearch,
           ),
         ],
       );
@@ -531,22 +560,27 @@ class _MediaLibraryState extends State<MediaLibrary> {
     return _grid(items);
   }
 
+  /// Cards stay at most [_maxTile] wide; the column count is what fits, and the leftover width
+  /// centres the row instead of stretching the art.
   Widget _grid(List<MediaItem> items) => LayoutBuilder(
     builder: (context, box) {
-      const gap = 18.0;
-      const minTile = 168.0;
       const text = 58.0;
       // Room for the focus ring, which sits 5px outside the art.
       const edge = 6.0;
       final width = box.maxWidth - 2 * edge;
-      final columns = ((width + gap) / (minTile + gap)).floor().clamp(2, 8);
-      final tile = (width - gap * (columns - 1)) / columns;
+      final gap = (width / 40).clamp(20.0, 36.0);
+      final columns = math.max(
+        _minColumns,
+        ((width + gap) / (_maxTile + gap)).floor(),
+      );
+      final tile = math.min(_maxTile, (width - gap * (columns - 1)) / columns);
+      final side = (width - tile * columns - gap * (columns - 1)) / 2;
       final extent = tile * 1.5 + text;
       _columns = columns;
       _rowExtent = extent + gap;
       return GridView.builder(
         controller: _scroll,
-        padding: const EdgeInsets.all(edge),
+        padding: EdgeInsets.symmetric(horizontal: edge + side, vertical: edge),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: columns,
           mainAxisSpacing: gap,
@@ -602,7 +636,8 @@ class _KeyHint extends StatelessWidget {
   );
 }
 
-/// A source's tab: pink outline when selected; dimmed with `Soon` when the source is planned only.
+/// A source's tab. Only the selected one is filled (light on plum, the highest contrast on the
+/// screen); the rest are quiet outlines, and planned-only sources are muted with `Soon`.
 class _SourceTab extends StatelessWidget {
   const _SourceTab({
     required this.source,
@@ -620,10 +655,10 @@ class _SourceTab extends StatelessWidget {
       height: 40,
       padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
-        color: selected ? WtColors.s2 : WtColors.s1,
+        color: selected ? WtColors.text : null,
         borderRadius: BorderRadius.circular(WtRadius.pill),
         border: Border.all(
-          color: selected ? WtColors.pink : WtColors.line,
+          color: selected ? WtColors.text : WtColors.line,
           width: 2,
         ),
       ),
@@ -635,7 +670,11 @@ class _SourceTab extends StatelessWidget {
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w800,
-              color: soon ? WtColors.tx3 : WtColors.text,
+              color: selected
+                  ? WtColors.plum
+                  : soon
+                  ? WtColors.tx3
+                  : WtColors.tx2,
             ),
           ),
           if (soon) ...[const SizedBox(width: 8), const _SoonTag()],
@@ -848,6 +887,7 @@ class _MediaCardState extends State<_MediaCard> {
                       fit: StackFit.expand,
                       children: [
                         _Art(item: item, poster: widget.poster),
+                        if (_hover || widget.selected) _actions(),
                         Positioned(
                           left: 8,
                           top: 8,
@@ -864,13 +904,6 @@ class _MediaCardState extends State<_MediaCard> {
                               height: 26,
                               fontSize: 12,
                             ),
-                          ),
-                        if (_hover || widget.selected)
-                          Positioned(
-                            left: 0,
-                            right: 0,
-                            bottom: 0,
-                            child: _actions(),
                           ),
                       ],
                     ),
@@ -906,17 +939,14 @@ class _MediaCardState extends State<_MediaCard> {
     );
   }
 
+  /// A scrim over the whole poster with the actions centred on it, so they never sit on the
+  /// art's own title band, and the caption under the poster stays clear.
   Widget _actions() {
     final queued = widget.queued;
     return Container(
-      padding: const EdgeInsets.fromLTRB(8, 28, 8, 8),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0x001A0E27), Color(0xE61A0E27)],
-        ),
-      ),
+      color: const Color(0xC21A0E27),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      alignment: Alignment.center,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [

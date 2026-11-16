@@ -1,0 +1,3 @@
+== q22 start
+== q22 done
+{"queue": "left items", "verdicts": [{"name": "q22", "phase": "done", "result": "All five items are done. `flutter test` passes with 176 tests and 1 skipped (the live-server test); that was 170 before. `flutter analyze` shows only the old `containsSemantics` deprecation note in `test/room_view_test.dart:430`, and `flutter build linux --debug` builds. Nothing is committed.\n\n**1. Grid density.** Cards are capped at 220 px wide. The column count is however many fit, with a minimu"}]}

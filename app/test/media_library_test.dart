@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +9,7 @@ import 'package:watch_together/media.dart';
 import 'package:watch_together/media_library.dart';
 import 'package:watch_together/theme.dart';
 import 'package:watch_together/widgets/button.dart';
+import 'package:watch_together/widgets/field.dart';
 
 import 'support.dart';
 
@@ -15,6 +17,44 @@ final Uri jellyServer = Uri.parse('https://jelly.example');
 
 /// Never decodes in fake time, so every card shows its fallback glyph.
 ImageProvider blankPoster(String url) => MemoryImage(Uint8List(0));
+
+/// A poster whose server is unreachable: the load fails at once, with no network involved.
+class UnreachablePoster extends ImageProvider<UnreachablePoster> {
+  UnreachablePoster(this.url, this.loads);
+  final String url;
+
+  /// Every load started, so a test can ask whether it has failed yet.
+  final List<ImageStreamCompleter> loads;
+
+  @override
+  Future<UnreachablePoster> obtainKey(ImageConfiguration configuration) =>
+      SynchronousFuture(this);
+
+  @override
+  ImageStreamCompleter loadImage(
+    UnreachablePoster key,
+    ImageDecoderCallback decode,
+  ) {
+    final load = OneFrameImageStreamCompleter(
+      Future<ImageInfo>.error(StateError('unreachable: $url')),
+    );
+    loads.add(load);
+    return load;
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is UnreachablePoster && other.url == url;
+
+  @override
+  int get hashCode => url.hashCode;
+}
+
+bool inside(Rect outer, Rect inner) =>
+    inner.left >= outer.left &&
+    inner.top >= outer.top &&
+    inner.right <= outer.right &&
+    inner.bottom <= outer.bottom;
 
 /// A source with a fixed shelf; [ready] flips on `ensureReady`.
 class FakeSource extends MediaSource {
@@ -79,8 +119,10 @@ void main() {
     LibraryMode mode = LibraryMode.play,
     MediaSourceKind? initial,
     ValueChanged<MediaItem>? onQueue,
+    Size size = const Size(1440, 900),
+    PosterImage poster = blankPoster,
   }) async {
-    useWindow(tester, desktopSizes.first);
+    useWindow(tester, size);
     late Future<LocalCopy?> result;
     await tester.pumpWidget(
       MaterialApp(
@@ -94,7 +136,7 @@ void main() {
                 mode: mode,
                 initial: initial,
                 onQueue: onQueue,
-                poster: blankPoster,
+                poster: poster,
               ),
               child: const Text('open'),
             ),
@@ -304,6 +346,143 @@ void main() {
       expect(find.byTooltip('Film'), findsNWidgets(3));
       expect(find.byTooltip('Music'), findsOneWidget);
       expect(find.byTooltip('Live'), findsOneWidget);
+    });
+
+    for (final (size, fewest, most) in [
+      (const Size(1440, 900), 4, 5),
+      (tiledSize, 2, 3),
+    ]) {
+      testWidgets('at ${size.width.toInt()} wide, $fewest–$most poster-sized '
+          'cards across, the row centred', (tester) async {
+        final many = [for (var i = 0; i < 12; i++) film('Episode $i')];
+        await openLibrary(
+          tester,
+          size: size,
+          sources: [FakeSource('Shelf', items: many)],
+        );
+        Rect card(int i) => tester.getRect(find.text('Episode $i'));
+        var columns = 1;
+        while (card(columns).top == card(0).top) {
+          columns++;
+        }
+        expect(columns, inInclusiveRange(fewest, most));
+        // The caption spans the card, so its width is the card's.
+        expect(card(0).width, inInclusiveRange(180, 220));
+        final left = card(0).left;
+        final right = size.width - card(columns - 1).right;
+        expect(left, closeTo(right, 0.5));
+      });
+    }
+
+    testWidgets('clear sits inside the search field, beside the / hint', (
+      tester,
+    ) async {
+      await openLibrary(tester, sources: [FakeSource('Shelf', items: shelf)]);
+      expect(find.byTooltip('Clear search'), findsNothing);
+
+      await tester.enterText(find.byType(TextField), 'steel');
+      await settle(tester);
+      final field = tester.getRect(find.byType(WtField));
+      expect(
+        inside(field, tester.getRect(find.byTooltip('Clear search'))),
+        isTrue,
+      );
+      expect(inside(field, tester.getRect(find.text('/'))), isTrue);
+      expect(find.text('Sintel'), findsNothing);
+
+      await tester.tap(find.byTooltip('Clear search'));
+      await settle(tester);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        isEmpty,
+      );
+      expect(find.text('Sintel'), findsOneWidget);
+      expect(find.byTooltip('Clear search'), findsNothing);
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'library search');
+    });
+
+    testWidgets(
+      'card actions sit mid-poster, clear of the title and duration',
+      (tester) async {
+        await openLibrary(
+          tester,
+          sources: [FakeSource('Shelf', items: shelf)],
+          onQueue: (_) {},
+        );
+        await tester.tap(find.text('Sintel'));
+        await tester.pump();
+        final title = tester.getRect(find.text('Sintel'));
+        final actions = tester
+            .getRect(find.widgetWithText(WtButton, 'Play'))
+            .expandToInclude(
+              tester.getRect(find.widgetWithText(WtButton, 'Queue')),
+            );
+        // The kind badge sits 8px into the poster's corner and the caption starts 10px under the
+        // poster, with the duration line below the title.
+        final badge = tester.getRect(find.byTooltip('Film').at(1));
+        expect(badge.left, title.left + 8);
+        final poster = Rect.fromLTRB(
+          title.left,
+          badge.top - 8,
+          title.right,
+          title.top - 10,
+        );
+        expect(inside(poster, actions), isTrue);
+        expect(actions.center.dy, closeTo(poster.center.dy, 1));
+      },
+    );
+
+    testWidgets('a real poster URL is built as an Image; a failed load keeps '
+        'the placeholder', (tester) async {
+      final url = posterUrl(
+        server: '$jellyServer',
+        token: 'fake-token',
+        itemId: jellyItemId,
+      );
+      final item = MediaItem(
+        ref: jellyfinRef(jellyServer, jellyItemId),
+        title: 'sample-room',
+        kind: MediaKind.video,
+        source: MediaSourceKind.jellyfin,
+        duration: const Duration(seconds: 20),
+        posterUrl: url,
+        aspect: 2 / 3,
+      );
+      final requested = <String>{};
+      final loads = <ImageStreamCompleter>[];
+      await openLibrary(
+        tester,
+        sources: [
+          FakeSource('Jellyfin', items: [item], kind: MediaSourceKind.jellyfin),
+        ],
+        poster: (u) {
+          requested.add(u);
+          return UnreachablePoster(u, loads);
+        },
+      );
+      expect(requested, {url});
+      final image = find.byType(Image);
+      expect(image, findsOneWidget);
+      expect(
+        tester.widget<Image>(image).image,
+        isA<UnreachablePoster>().having((p) => p.url, 'url', url),
+      );
+      // The shipped default would load exactly that URL.
+      expect(networkPoster(url), NetworkImage(url));
+
+      // The load has failed by now: the gradient and the kind glyph stay, no broken-image box.
+      await settle(tester);
+      Object? failure;
+      loads.single.addListener(
+        ImageStreamListener((_, _) {}, onError: (e, _) => failure = e),
+      );
+      expect(failure, isA<StateError>());
+      expect(tester.takeException(), isNull);
+      expect(find.byType(Placeholder), findsNothing);
+      expect(
+        find.descendant(of: image, matching: find.byIcon(Icons.movie_outlined)),
+        findsOneWidget,
+      );
     });
 
     testWidgets('not signed in offers Connect, which signs in and browses', (

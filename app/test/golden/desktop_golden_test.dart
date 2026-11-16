@@ -244,7 +244,7 @@ void main() {
         });
         await tester.pump();
         if (queue) {
-          for (final title in ['Big Buck Bunny', 'Sintel']) {
+          for (final title in ['Big Buck Bunny', 'Elephants Dream']) {
             await tester.tap(find.text(title));
             await tester.pump();
             await tester.tap(find.text('Queue this'));
@@ -256,6 +256,38 @@ void main() {
         await expectLater(
           find.byType(MaterialApp),
           matchesGoldenFile('library_${queue ? 'queue_' : ''}$name.png'),
+        );
+      });
+    }
+
+    if (name == '1440') {
+      testWidgets('library with no search matches at $label', (tester) async {
+        useWindow(tester, size);
+        final jellyfin = JellyfinMediaSource(
+          api: FakeJellyfinApi(saved: ShelfSession(server: Uri.parse(_jelly))),
+          signIn: (_) async => null,
+        );
+        await jellyfin.restore();
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: wtTheme(),
+            debugShowCheckedModeBanner: false,
+            home: MediaLibrary(
+              sources: mediaSources(
+                local: LocalMediaSource(pickFile: () async => null),
+                jellyfin: jellyfin,
+              ),
+              initial: MediaSourceKind.jellyfin,
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.enterText(find.byType(TextField), 'zzz');
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        await expectLater(
+          find.byType(MaterialApp),
+          matchesGoldenFile('library_no_match_$name.png'),
         );
       });
     }
